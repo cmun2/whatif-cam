@@ -148,8 +148,8 @@ hatch — this is a primary funnel concern, not a footnote.
 | Layer | Choice | Why |
 |---|---|---|
 | Depth (once) | **Depth Anything V2 Small, ONNX — fp16 ~50 MB in browser, int8 26 MB** | measured 0.5–1.3° real plane tilt; relative depth suffices (R2). **Apache-2.0** — note V2 *Base/Large are CC-BY-NC-4.0 and disqualified*, so "just use a bigger model" is not available. Prefer fp16 over int8/q4 in-browser: q4 is reported to band and to run *slower* than fp16 |
-| Segmentation (once + per tap) | **SlimSAM-77 int8, 13.2 MB** | 841 ms encode, 19 ms/tap; promptable = exactly the tap UX (R4) |
-| Runtime | **ONNX Runtime Web** (WASM default, WebGPU opt-in) | same ONNX artifacts measured here; transformers.js is a fallback |
+| Segmentation (once + per tap) | **SlimSAM-77 int8, 13.2 MB** for v0.0 → **EdgeTAM (~20 MB fp16, Apache-2.0)** from v0.1 | SlimSAM is what we measured: 841 ms encode, 19 ms/tap (R4). EdgeTAM is transformers.js-native and **tracks across frames**, which SlimSAM does not — and per-frame tracking is requirement R6. Switch as soon as we need motion, not before. Note `pipeline('mask-generation')` is unsupported in transformers.js; go through the `SamModel`/`EdgeTamModel` classes |
+| Runtime | **ONNX Runtime Web** (WebGPU preferred, WASM fallback) | same ONNX artifacts measured here. `@huggingface/transformers` is now **v4.x** (WebGPU EP rewritten in C++), not v3 |
 | Physics | **fixed-step 2.5D solver, written in-repo** | see below |
 | Overlay | Canvas2D | ghost path is a polyline + band; WebGL is unjustified |
 | Language | TypeScript, no framework in the core | core must be portable and dependency-light |
@@ -163,6 +163,14 @@ plane with friction and restitution. That is ~150 lines and it must be *determin
 differentiable-ish* so we can (i) run it 32× for uncertainty, (ii) fit friction from observation,
 (iii) unit-test it against closed-form answers. A general 3D engine is a large dependency that makes
 those three things harder. Adopt Rapier at v0.3 if and when we need real 3D contact — not before.
+
+### Hosting is an architectural decision, not a deployment detail
+
+Multi-threaded WASM needs `SharedArrayBuffer`, which needs `COOP`/`COEP` headers, which
+**GitHub Pages cannot set**. On GitHub Pages every non-WebGPU visitor falls back to
+*single-threaded* WASM — reported as "a few frames per second". Since WebGPU is our fast path and
+WASM is the compatibility path, hosting somewhere that can set those headers (Cloudflare Pages,
+Netlify, Vercel) is worth deciding now rather than after the first bad demo.
 
 ### Optional Python "lab" (not on the live path)
 

@@ -69,6 +69,15 @@ meaningless).
 
 ---
 
+## The one genuinely unsolved step
+
+Compute is not the constraint. PhysGen's rigid-body sim runs in ~3 s *without a GPU*; Video2Game
+hits 102 fps in Chrome. Once perception is done, simulation and rendering are nearly free. The step
+with no prior art to copy is: **a noisy single-view depth map → collision geometry that behaves
+sensibly and stays in register when composited back over the real pixels.** That is where this
+project succeeds or fails, and it is why v0.0 is scoped to a single plane and a single sphere — the
+smallest version of exactly that step.
+
 ## Risks, worst first
 
 1. **Low-texture tables.** Everything measured used a *textured* surface (checkerboard, pool felt).
