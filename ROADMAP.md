@@ -82,7 +82,10 @@ smallest version of exactly that step.
 
 1. **Low-texture tables.** Everything measured used a *textured* surface (checkerboard, pool felt).
    A plain white desk is the known weak case for monocular depth and is the actual v0.1 target.
-   **Unmeasured — test this first, on day one, before writing app code.**
+   **Still unmeasured on plain tables — the harness is `m0/`, it needs ten phone photos.**
+   Ground-truth evidence gathered while building it (8 NYU frames, mostly plain indoor
+   surfaces) puts the true orientation error at a median 4.8°, so treat "depth carries the
+   plane" as unproven rather than likely.
 2. **Browser inference is unmeasured.** All timings are native ONNX Runtime. WASM is typically
    slower. If the one-shot depth pass costs 3 s in-browser it is still acceptable (it is one-shot),
    but this must be checked, not assumed.
@@ -108,10 +111,30 @@ smallest version of exactly that step.
 
 ## First implementation milestone
 
-**Before any application code:** a 30-line script that runs the existing depth model on ~10 photos
-of *real, plain, untextured* tables and reports the near/far plane tilt disagreement, exactly as
-`probe/real_probe.py` does for the pool table. If that number stays under ~5°, build v0.0. If it
-blows past 10° on plain surfaces, the fix is a manual 4-tap plane (the scale-invariance result means
-a tapped rectangle is enough) and depth becomes optional — a smaller, still-honest product.
+**Before any application code:** run the existing depth model on ~10 photos of *real, plain,
+untextured* tables and see whether the recovered plane is good enough. If it is under ~5°,
+build v0.0. If it blows past 10° on plain surfaces, the fix is a manual 4-tap plane (the
+scale-invariance result means a tapped rectangle is enough) and depth becomes optional — a
+smaller, still-honest product.
 
 This is one afternoon and it decides the shape of everything after it.
+
+**Built: [`m0/`](m0/). One command — `./m0/run.sh photos/` — plus a shooting protocol in
+[`m0/README.md`](m0/README.md).**
+
+One change of substance from the plan above. The milestone as written gates on the near/far
+half-split disagreement, and that number turns out not to be able to answer the question: it
+detects whether the back-projected surface is *bent*, and is provably blind to a global
+additive offset on the model's disparity output, which *rotates* the plane. On the synthetic
+scene of `RESEARCH.md` §3.4 the near/far metric reads 0.31° while the plane is 13.5° wrong.
+So the harness still reports near/far — bend is worth knowing — but gates on the angle between
+the depth-derived plane and the plane implied by the owner's four taps, which is the only
+orientation-*accuracy* number a photograph yields without ground truth. Full argument and proof:
+`m0/README.md` §5, reproducible with `./m0/run.sh --selftest`.
+
+The same round produced a ground-truth result that belongs in risk #1 below: on 8 NYU frames
+with Kinect depth, DAv2-Small's true plane-orientation error on plain horizontal surfaces is a
+median **4.8°** — at the edge of the budget, not inside it — while a 4-tap plane with 2 px of
+tap error is **1.0°** on the same images. The fallback is currently the more accurate method.
+That does not settle the verdict (NYU is not a phone camera pointed at the owner's table), but
+it moves the prior.

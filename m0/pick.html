@@ -1,0 +1,70 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>M0 corner picker</title>
+<style>
+ body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:16px;background:#141416;color:#e8e8ea}
+ h1{font-size:15px;margin:0 0 8px;font-weight:600}
+ p{color:#a0a0a8;margin:4px 0}
+ #drop{border:1px dashed #55555e;border-radius:6px;padding:22px;text-align:center;color:#8a8a92;margin:10px 0}
+ #drop.on{border-color:#6ea8fe;color:#6ea8fe}
+ canvas{max-width:100%;border:1px solid #33333a;cursor:crosshair;display:block}
+ button{font:inherit;background:#26262c;color:#e8e8ea;border:1px solid #44444c;border-radius:5px;padding:5px 11px;margin-right:6px;cursor:pointer}
+ button:hover{background:#31313a}
+ pre{background:#0d0d0f;border:1px solid #33333a;border-radius:6px;padding:11px;white-space:pre-wrap;color:#8fd98f}
+ code{background:#26262c;padding:1px 5px;border-radius:3px}
+ .warn{color:#e0b050}
+</style>
+<h1>M0 corner picker</h1>
+<p>Drop a photo below, then click the four corners of the tabletop in this order:
+<b>far-left, far-right, near-right, near-left</b> (i.e. clockwise starting at the far left).
+Copy the JSON and save it next to the photo as <code>&lt;same name&gt;.json</code>.</p>
+<p>Nothing is uploaded; this page does no network access. It is a convenience — any
+source of pixel coordinates works.</p>
+<div id="drop">drop a photo here (or click to choose)</div>
+<input type="file" id="file" accept="image/*" hidden>
+<div>
+ <button id="undo">undo last point</button>
+ <button id="clear">clear</button>
+ <button id="poly">mode: quad (4 pts)</button>
+ <span id="status" style="color:#a0a0a8"></span>
+</div>
+<canvas id="cv"></canvas>
+<pre id="out">—</pre>
+<script>
+const cv=document.getElementById('cv'),ctx=cv.getContext('2d'),out=document.getElementById('out');
+const drop=document.getElementById('drop'),file=document.getElementById('file'),st=document.getElementById('status');
+let img=null,pts=[],name='photo',mode='quad';
+const LBL=['TL (far-left)','TR (far-right)','BR (near-right)','BL (near-left)'];
+function load(f){name=f.name.replace(/\.[^.]+$/,'');const u=URL.createObjectURL(f);const i=new Image();
+ i.onload=()=>{img=i;pts=[];draw();};i.src=u;}
+drop.onclick=()=>file.click();
+file.onchange=e=>{if(e.target.files[0])load(e.target.files[0]);};
+drop.ondragover=e=>{e.preventDefault();drop.classList.add('on');};
+drop.ondragleave=()=>drop.classList.remove('on');
+drop.ondrop=e=>{e.preventDefault();drop.classList.remove('on');if(e.dataTransfer.files[0])load(e.dataTransfer.files[0]);};
+document.getElementById('undo').onclick=()=>{pts.pop();draw();};
+document.getElementById('clear').onclick=()=>{pts=[];draw();};
+document.getElementById('poly').onclick=e=>{mode=mode==='quad'?'polygon':'quad';
+ e.target.textContent='mode: '+(mode==='quad'?'quad (4 pts)':'polygon (any)');pts=[];draw();};
+cv.onclick=e=>{if(!img)return;const r=cv.getBoundingClientRect();
+ const x=(e.clientX-r.left)*cv.width/r.width, y=(e.clientY-r.top)*cv.height/r.height;
+ if(mode==='quad'&&pts.length>=4)return; pts.push([Math.round(x),Math.round(y)]);draw();};
+function draw(){
+ if(!img){out.textContent='—';return;}
+ cv.width=img.naturalWidth;cv.height=img.naturalHeight;
+ ctx.drawImage(img,0,0);
+ const s=Math.max(1,img.naturalWidth/900);
+ ctx.lineWidth=2.5*s;ctx.strokeStyle='#3cff6e';ctx.fillStyle='#3cff6e';
+ ctx.font=(13*s)+'px system-ui';
+ if(pts.length>1){ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);
+  for(const p of pts.slice(1))ctx.lineTo(p[0],p[1]);
+  if((mode==='quad'&&pts.length===4)||mode==='polygon')ctx.closePath();ctx.stroke();}
+ pts.forEach((p,i)=>{ctx.beginPath();ctx.arc(p[0],p[1],5*s,0,7);ctx.fill();
+  ctx.fillText(mode==='quad'?LBL[i]:String(i+1),p[0]+9*s,p[1]-7*s);});
+ st.textContent=` ${img.naturalWidth}x${img.naturalHeight}, ${pts.length} point(s)`;
+ if(mode==='quad'&&pts.length<4){out.textContent='click '+LBL[pts.length];return;}
+ if(mode==='polygon'&&pts.length<3){out.textContent='click at least 3 points';return;}
+ const key=mode==='quad'?'quad':'polygon';
+ out.textContent='save as  '+name+'.json\n\n'+JSON.stringify({[key]:pts},null,2);
+}
+</script>

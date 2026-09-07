@@ -5,3 +5,6 @@ probe/out/nyu15.zip
 probe/out/*.npy
 __pycache__/
 *.pyc
+m0-out/
+photos/
+m0-demo/

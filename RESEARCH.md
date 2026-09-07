@@ -156,6 +156,12 @@ scale+shift alignment to GT (which is *generous* — it uses ground truth):
 **These synthetic numbers are unrealistically good and must not be quoted as the product's
 accuracy.** A clean textured plane is the easiest possible input for a DINOv2-based model.
 
+> **CORRECTION (M0 round).** They are worse than "unrealistically good" — the plane-tilt
+> column is only reachable *because of* the scale+shift alignment against ground truth
+> noted above, which no product has. Repeat the 518px row with `depth = 1/disp` and the
+> tilt error is **13.47°**, not 0.03°. A 4-tap plane from the same image recovers the true
+> normal to **0.012°**.
+
 *Real photo* — a CC0 pool-hall photograph (Wikimedia `Billiards table.jpg`), oblique view.
 No ground-truth depth is needed: pool felt is flat by construction, so the scatter of the
 back-projected felt about its own best-fit plane *is* the error, and the tilt disagreement
@@ -169,7 +175,26 @@ between planes fitted to the near half and far half is a direct estimate of orie
 
 Sensitivity to the assumed camera FOV (real intrinsics unknown for a web photo):
 FOV 45°→0.5°, 55°→0.6°, 65°→0.7°, 75°→0.8°, 90°→0.9° tilt.
-**Plane orientation is robust to getting the focal length badly wrong — no calibration step needed.**
+~~**Plane orientation is robust to getting the focal length badly wrong — no calibration
+step needed.**~~
+
+> **CORRECTION (M0 round).** The three paragraphs above measure the wrong quantity, and
+> the FOV conclusion does not survive. Every number here is a *near/far half-split*
+> disagreement, which detects whether the back-projected surface is **bent** — and is
+> provably blind to a global additive offset on the model's disparity output, which
+> **rotates** the plane. DAv2 emits affine-invariant inverse depth (`1/depth = a·disp + b`
+> with both unknown); this code assumes `b = 0`.
+>
+> With the offset wrong by Δ, a plane back-projects to another exact plane with normal
+> `n + κΔ·e_z`: both halves still agree, so the metric reads zero while the orientation is
+> wrong. On the synthetic scene of §3.4, `depth = 1/disp` puts the plane **13.5° off**
+> while this metric reads **0.31°**. With ground truth (`./m0/run.sh --validate`, 8 NYU
+> frames), the model's **true** plane-orientation error on plain horizontal surfaces is a
+> median **4.8°**, the near/far proxy reads 4.9° but correlates with it at only **0.47**,
+> and the true error swings by a median 6.5° (max 13.1°) across an assumed FOV of 40–100°.
+>
+> The 0.5–1.3° figures below are therefore a *lower bound on bend*, not orientation
+> accuracy. See `m0/README.md` §5; reproduce with `./m0/run.sh --selftest`.
 
 ### 3.4 The decisive experiment: does the 3D estimate beat naive 2D?
 
@@ -228,7 +253,12 @@ open, and browser-runnable — are sufficient. This removes the hardest percepti
   browser figures as unknown until run on the owner's machine.
 - **Low-texture planes are unmeasured.** The real test surface was a textured pool table. A plain
   white desk is depth models' known weak case and is the actual v0.1 target. **This is the
-  biggest open perception risk.**
+  biggest open perception risk.** — the harness that settles it is now in `m0/`; it needs
+  ten phone photos and one afternoon.
+- **Plane ORIENTATION was never measured at all**, only plane *bend*. See the correction in
+  §3.3. With ground truth the true error is ~5×larger than the reported proxy, and a manual
+  4-tap plane is ~5× more accurate than the depth model on the same real images (1.0° vs
+  4.8° median).
 - **Only one real scene** was tested (n=1). The 0.5–1.3° figure is an existence proof, not a distribution.
 - Object tracking accuracy over time was modelled as 1 px Gaussian noise, not measured from a real tracker.
 
@@ -242,6 +272,8 @@ python3 -m venv .venv && ./.venv/bin/pip install numpy pillow onnxruntime scipy 
 ./.venv/bin/python probe/analyze.py      # depth accuracy + short-horizon comparison
 ./.venv/bin/python probe/analyze2.py     # long-horizon + plane-error sweep  <-- the decisive one
 ./.venv/bin/python probe/real_probe.py   # real photo: planarity + SlimSAM timing
+./m0/run.sh --selftest                   # M0 harness vs the numbers above + the shift proof
+./m0/run.sh --validate                   # ground-truth plane accuracy on NYU frames
 ```
 Models are expected in `models/` (see 3.1 for URLs).
 

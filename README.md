@@ -12,12 +12,17 @@ overlaid on the live camera, with an honest uncertainty band.
 - [`ROADMAP.md`](ROADMAP.md) — scope verdict and what was cut
 - [`docs/research/landscape.md`](docs/research/landscape.md) — competitive/technical survey
 - [`probe/`](probe/) — the feasibility experiments; run them, they are the evidence
+- [`m0/`](m0/README.md) — **the gate**: ten photos of plain tables decide whether v0.0 gets
+  built as designed or falls back to a manual 4-tap plane. `./m0/run.sh photos/`
 
 ## What the probe established
 
 - Recovering the ground plane beats naive 2D screen extrapolation by **~22×** at a 1 s horizon.
-- Plane orientation from a **26 MB open-weight relative-depth model** is accurate to **0.5–1.3°**
-  on a real photo — inside the ~5° budget the physics needs.
+- ~~Plane orientation from a **26 MB open-weight relative-depth model** is accurate to
+  **0.5–1.3°** on a real photo.~~ **Corrected in the M0 round:** that figure measures plane
+  *bend*, not orientation, and is blind to the error that dominates. Against ground truth the
+  true orientation error is a median **4.8°** — at the edge of the budget. See
+  [`m0/README.md`](m0/README.md) §5.
 - **Metric depth is not required**: a 2× scale error costs only 219 mm at 2 s.
 - Tap-to-select runs at **19 ms per tap**; the neural work is a one-shot setup cost, not per-frame.
 
