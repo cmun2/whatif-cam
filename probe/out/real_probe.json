@@ -1,0 +1,17 @@
+{
+  "518": {
+    "infer_ms": 455.33862499999975,
+    "rms_over_extent_pct": 0.8078912696569115,
+    "half_tilt_disagreement_deg": 0.671310992259108
+  },
+  "392": {
+    "infer_ms": 246.33387499999947,
+    "rms_over_extent_pct": 0.7716734353034082,
+    "half_tilt_disagreement_deg": 1.3418187549700862
+  },
+  "252": {
+    "infer_ms": 94.29304100000024,
+    "rms_over_extent_pct": 0.9492643774585904,
+    "half_tilt_disagreement_deg": 0.4756082707356126
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "trajectory": {
+    "oracle plane (upper bound)": {
+      "pos_med_mm": 19.550959004648753,
+      "pos_p90_mm": 23.02505937073927,
+      "t_med_ms": 33.333333333333435,
+      "miss_pct": 0.0
+    },
+    "mono-depth plane 518px": {
+      "pos_med_mm": 19.487624096892603,
+      "pos_p90_mm": 22.984089824509923,
+      "t_med_ms": 33.333333333333435,
+      "miss_pct": 0.0
+    },
+    "mono-depth plane 252px": {
+      "pos_med_mm": 10.690954684753322,
+      "pos_p90_mm": 13.998975843031065,
+      "t_med_ms": 16.666666666666718,
+      "miss_pct": 0.0
+    },
+    "homography (4 pts, 2px noise)": {
+      "pos_med_mm": 20.445732699818365,
+      "pos_p90_mm": 26.118190176066218,
+      "t_med_ms": 33.333333333333435,
+      "miss_pct": 0.0
+    },
+    "naive 2D screen extrapolation": {
+      "pos_med_mm": 17.138186679330673,
+      "pos_p90_mm": 37.04435511268405,
+      "t_med_ms": 16.66666666666622,
+      "miss_pct": 0.0
+    }
+  },
+  "gt_t": 0.41666666666666713
+}
