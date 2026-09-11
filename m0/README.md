@@ -135,6 +135,30 @@ One shared `photos/regions.json` keyed by filename works too.
 A photo with no sidecar is **skipped, loudly**. There is deliberately no auto-guess: a
 wrong region produces a confident wrong number, which is worse than a missing one.
 
+### If nobody is there to tap
+
+```bash
+.venv/bin/python m0/autoquad_run.py photos/
+```
+
+`m0/autoquad.py` detects the quad instead: SlimSAM-77 (already bundled) for a coarse
+tabletop mask, a maximum-area quadrilateral in its convex hull as a seed, then each of the
+four edges refined at **full resolution** by locating the bright→dark silhouette to
+sub-pixel accuracy along perpendicular intensity profiles, and the corners taken as the
+intersections of the fitted lines.
+
+This does not repeal the paragraph above. It writes an ordinary sidecar, so the run is
+identical to a hand-tapped one; it writes `m0-work/quad_<stem>.png` per photo, which you
+must look at; and any photo whose four edges cannot be fitted with enough support is
+**excluded and named**, not guessed at.
+
+Where it is available it is also *better* than a tap, for two reasons. A tabletop with
+radiused corners has no vertex to tap — a human taps the arc and is biased inward by the
+radius, while intersecting the extended edges recovers the ideal vertex the
+vanishing-point math actually wants. And it works when a corner falls outside the frame,
+provided both of its edges are partly visible. On the owner's photos the fitted edges have
+an RMS of 0.4–0.8 px over 4032 px, against a 4-tap noise floor quoted at ±2 px.
+
 **Look at `m0-out/overlays/`.** Red is what was measured, green is the tapped quad. Thirty
 seconds of looking at ten overlays catches every mistake this harness can make.
 
@@ -269,6 +293,66 @@ regions produce noisy readings. This is a strong prior, not the verdict.
 published 0.7/1.3/0.5), so the M0 code has not drifted from the code the research round
 validated.
 
-**Still open until the photos exist:** everything about plain untextured tables
-specifically, on a modern phone camera, at the angles a user would actually hold it.
-That is the gate, and it is the one thing that cannot be simulated here.
+**The owner's photos, 2026-09-11** (`./m0/run.sh photos/`; 11 JPEGs of one plain white
+office tabletop, iPhone 16 Pro Max, 4032x3024, EXIF intact):
+
+| quantity | median |
+|---|---:|
+| **`4tap-vs-depth` -- the verdict metric** | **1.9 deg** (range 0.9-5.2) |
+| near/far disagreement | 3.3 deg |
+| surface flatness | 0.28 % |
+| 4-tap noise floor (2 px taps) | 0.1 deg |
+| residual after solving the disparity offset | 1.0 deg |
+
+**Verdict: BUILD.** All eleven photos land under the 5 deg budget. This is a markedly
+better result than the NYU prior above (4.8 deg), and the reason is visible in the
+numbers: the best-fit disparity offset is only 1-11 % of each region's own disparity
+range, so `depth = 1/disp` is very nearly right for this geometry. That is a property of
+the *configuration* -- a table filling the frame from 40-60 cm has a large disparity
+range, which makes the unknown additive offset proportionally small. `shift_sensitivity`
+is still ~22 deg per unit of disparity range, so a smaller or more distant surface would
+not inherit this result.
+
+Three caveats, in descending order of how much they should worry you:
+
+1. **One surface, one room, one light, one angle.** The camera elevation across all
+   eleven photos is 34.8-40.2 deg -- a 5.4 deg spread. Per "Take the photos" above, that
+   is one condition measured eleven times, not a distribution. There is also **no
+   textured-surface positive control**, so a bad result could not have been attributed.
+2. **Every photo is the ultra-wide (0.5x) lens**, EXIF `FocalLengthIn35mmFilm` = 14 mm,
+   HFOV 104.3 deg -- outside the 45-90 deg the FOV sweep covered, and against this
+   README's own instruction to shoot at 1x. Measured rather than assumed, the *geometric*
+   half of that worry is unfounded (see below), but Depth Anything V2 was not trained on
+   104 deg imagery and that part cannot be checked from here.
+3. The quads were **auto-detected, not hand-tapped** (`m0/autoquad.py`).
+
+**The lens, measured rather than assumed.** Two checks, both from the photos themselves:
+
+- *Distortion.* The tabletop's four edges are physically straight, giving 44 straight
+  lines probing out to 91 % of the frame-corner radius. `./m0/lenscheck.py photos/` fits
+  one radial coefficient to them: **k1 = -0.001**, RMS 0.33 px versus 0.336 px for a pure
+  pinhole -- a 3 % improvement, i.e. none. A genuinely uncorrected ultra-wide
+  (k1 ~ -0.05 to -0.2) fits 12-60x *worse*. The phone's ISP has already rectified the
+  0.5x lens before writing the JPEG, and `m0/planefit.py`'s pinhole model is valid on
+  these files. Re-running the whole gate on undistorted images moves the verdict metric
+  1.9 -> 2.1 deg.
+- *Focal length.* The top is a rectangle, so the assumed FOV can be checked against the
+  photos: sweeping it and asking which value makes all eleven views agree on the table's
+  aspect ratio gives **104.5 deg** (aspect 1.581, CV 0.18 %) against EXIF's 104.3 deg.
+  The recovered aspect corresponds to a 1200 x 760 mm table. At the harness's old 65 deg
+  fallback the recovered aspect would have been 1.06 with 13x the spread.
+
+That second check mattered more than it looks: `fov_from_exif` was reading PIL's IFD0,
+where iPhones do not put tag 41989 -- it lives in the Exif sub-IFD. Every row would have
+silently read `default` 65 deg. Fixed in `m0/planefit.py`.
+
+Note that the verdict metric is nearly *insensitive* to the assumed FOV (1.8 deg at 90 deg,
+2.0 deg at 115 deg) because the depth plane and the 4-tap plane rotate together with it.
+The *absolute* orientation is not: it moves ~2 deg per 4 deg of FOV error. Agreement at a
+wrong focal length would have been agreement on a wrong plane, which is why the
+self-calibration above is load-bearing and not decoration.
+
+**Still open:** other surfaces, other rooms, other lighting, a genuinely varied set of
+angles, a textured positive control, and whether a 1x (24 mm) shot -- which is what the
+product will actually see, and what the depth model was trained on -- reproduces the
+1.9 deg.

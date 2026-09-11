@@ -63,6 +63,15 @@ def fov_from_exif(im):
     if not ex:
         return None
     f35 = ex.get(41989)                      # FocalLengthIn35mmFilm
+    if not f35:
+        # PIL's getexif() returns IFD0 only; on iPhone (and most cameras) 41989 lives in
+        # the Exif sub-IFD at 0x8769. Without this the focal length is silently lost and
+        # the harness falls back to its 65 deg guess -- which on an ultra-wide (104 deg)
+        # is a 2.2x focal-length error, worth tens of degrees of plane error.
+        try:
+            f35 = ex.get_ifd(0x8769).get(41989)
+        except Exception:
+            f35 = None
     try:
         if f35:
             f35 = float(f35)
