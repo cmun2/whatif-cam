@@ -16,19 +16,45 @@ if (!existsSync(photos)) {
   skip('reads the focal length out of the Exif sub-IFD, not IFD0', 'no photos/ in this clone');
 } else {
   const files = readdirSync(photos).filter((f) => /\.jpe?g$/i.test(f)).sort();
+
+  // What this test is FOR is the sub-IFD walk -- that a real iPhone JPEG yields a focal
+  // length at all. An earlier version asserted 14 mm on every file in photos/, which
+  // silently made the test a property of one photo set: adding photos shot on the 1x lens
+  // (24 mm) failed it, even though the parser was working perfectly. So assert the parse,
+  // assert the lens formula, and report the focal lengths found rather than fixing them.
   test('reads the focal length out of the Exif sub-IFD, not IFD0', () => {
     assert(files.length > 0, 'no JPEGs found');
+    const byFocal = new Map();
     let read = 0;
     for (const f of files) {
       const r = focalFromJpeg(readFileSync(new URL(f, photos)));
       if (!r) continue;
       read++;
-      close(r.f35, 14, 0.001, `${f} FocalLengthIn35mmFilm`);
-      close(r.hfovDeg, 104.25, 0.05, `${f} horizontal FOV`);
+      assert(r.f35 > 5 && r.f35 < 400, `${f}: f35 ${r.f35} mm is not a plausible 35 mm equivalent`);
+      // 36 mm is the full-frame sensor width the "35 mm equivalent" is defined against.
+      const expected = 2 * Math.atan(36 / (2 * r.f35)) * 180 / Math.PI;
+      close(r.hfovDeg, expected, 0.05, `${f}: FOV derived from f35=${r.f35}`);
+      byFocal.set(r.f35, (byFocal.get(r.f35) || 0) + 1);
     }
     assert(read === files.length, `only ${read} of ${files.length} photos yielded a focal length`);
-    note(`${read} photos, all 14 mm equivalent = 104.25 deg horizontal (iPhone 0.5x ultra-wide)`);
+    note([...byFocal.entries()].sort((a, b) => a[0] - b[0])
+      .map(([f35, n]) => `${n}x ${f35} mm`).join(', ') + ` (${read} photos)`);
   });
+
+  // The one focal length the write-up actually cites, anchored by filename so it cannot
+  // drift, and skipped rather than failed when that photo is not in this clone.
+  const anchor = 'IMG_5359.JPG';
+  if (files.includes(anchor)) {
+    test('the M0 reference photo still reads 14 mm / 104.25 deg', () => {
+      const r = focalFromJpeg(readFileSync(new URL(anchor, photos)));
+      assert(r, `${anchor}: no focal length`);
+      close(r.f35, 14, 0.001, `${anchor} FocalLengthIn35mmFilm`);
+      close(r.hfovDeg, 104.25, 0.05, `${anchor} horizontal FOV`);
+      note('iPhone 0.5x ultra-wide -- the lens the M0 eleven were shot on');
+    });
+  } else {
+    skip('the M0 reference photo still reads 14 mm / 104.25 deg', `${anchor} not in photos/`);
+  }
 
   test('the same files through IFD0 alone would have given nothing', () => {
     // Sanity: the tag really is absent from IFD0, so the sub-IFD walk is load-bearing and

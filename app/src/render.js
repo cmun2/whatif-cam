@@ -46,9 +46,45 @@ export function drawPlaneLayer(ctx, layer, show) {
   if (layer && show) ctx.drawImage(layer, 0, 0);
 }
 
+/** The contact shadow. Shape comes from the fitted plane, so it is evidence, not styling. */
+function drawGroundShadow(ctx, poly) {
+  if (!poly || poly.length < 3) return;
+  let cx = 0, cy = 0;
+  for (const [x, y] of poly) { cx += x; cy += y; }
+  cx /= poly.length; cy /= poly.length;
+  let rMax = 0;
+  for (const [x, y] of poly) rMax = Math.max(rMax, Math.hypot(x - cx, y - cy));
+  const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rMax, 1));
+  g.addColorStop(0, 'rgba(0,0,0,0.42)');
+  g.addColorStop(0.65, 'rgba(0,0,0,0.22)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(poly[0][0], poly[0][1]);
+  for (const q of poly.slice(1)) ctx.lineTo(q[0], q[1]);
+  ctx.closePath();
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * The ball that has been PLACED -- not the prediction.
+ *
+ * The swarm along the path is deliberately not a solid sphere (see drawPrediction: one ball
+ * gliding down the mean would restore exactly the confidence the band exists to remove).
+ * This one is different: it is at a definite place, chosen by a tap, and drawing it as a
+ * 1.5 px circle outline made it look like a shape pasted onto the photo rather than an
+ * object on the table. Three cues fix that, and none of them invent information:
+ *
+ *   - a contact shadow whose outline is a circle in the FITTED PLANE, projected;
+ *   - shading across the sphere, so its edge reads as curvature rather than a stroke;
+ *   - translucency, because it is a ghost: nothing here was measured off the table.
+ */
 export function drawBall(ctx, ball) {
   if (!ball) return;
   const [u, v] = ball.contactPixel;
+  drawGroundShadow(ctx, ball.groundPolygon);
   ctx.save();
   if (ball.maskOutline) {
     ctx.strokeStyle = C_BALL; ctx.lineWidth = 1.5;
@@ -58,10 +94,25 @@ export function drawBall(ctx, ball) {
     }
     ctx.stroke();
   } else {
-    ctx.strokeStyle = C_BALL; ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.ellipse(u, v - ball.radiusPx * 0.75, ball.radiusPx, ball.radiusPx, 0, 0, 2 * Math.PI);
-    ctx.stroke();
+    const r = Math.max(ball.radiusPx, 2);
+    const cy = v - r * 0.75;
+    // Highlight up and to the left. The light direction is NOT estimated from the image, so
+    // this is the one cosmetic choice here; it is kept weak for that reason.
+    const g = ctx.createRadialGradient(u - r * 0.34, cy - r * 0.34, r * 0.06, u, cy, r);
+    g.addColorStop(0, 'rgba(255, 248, 244, 0.92)');
+    g.addColorStop(0.45, 'rgba(255, 176, 150, 0.62)');
+    g.addColorStop(0.86, 'rgba(232, 104, 74, 0.42)');
+    g.addColorStop(1, 'rgba(180, 70, 50, 0.30)');
+    ctx.beginPath(); ctx.arc(u, cy, r, 0, 2 * Math.PI);
+    ctx.fillStyle = g; ctx.fill();
+    // A limb, so the sphere stays legible on a light table and on a dark one.
+    ctx.strokeStyle = C_BALL; ctx.lineWidth = 1.25; ctx.stroke();
+    // Specular dot, sub-pixel-safe.
+    if (r > 6) {
+      ctx.beginPath();
+      ctx.arc(u - r * 0.36, cy - r * 0.38, Math.max(r * 0.13, 1), 0, 2 * Math.PI);
+      ctx.fillStyle = 'rgba(255,255,255,0.80)'; ctx.fill();
+    }
   }
   // The contact point. ROADMAP.md risk 3: this is the mask's lower edge, not its centroid.
   ctx.fillStyle = C_BALL;
@@ -158,20 +209,47 @@ export function drawPrediction(ctx, pred, opts = {}) {
  * spread, and a confident-looking sphere sliding along the middle of it would read as a
  * measurement. What moves is the swarm; the ring only says where its middle is.
  */
+const SWARM_R = 7;
+let _swarmSprite = null;
+/** One soft blob, built once. Alpha falls to zero at the rim so overlaps read as density. */
+function swarmSprite() {
+  if (_swarmSprite) return _swarmSprite;
+  const d = SWARM_R * 2;
+  const c = typeof OffscreenCanvas !== 'undefined'
+    ? new OffscreenCanvas(d, d)
+    : Object.assign(document.createElement('canvas'), { width: d, height: d });
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(SWARM_R, SWARM_R, 0, SWARM_R, SWARM_R, SWARM_R);
+  grad.addColorStop(0, 'rgba(186, 226, 255, 0.40)');
+  grad.addColorStop(0.35, 'rgba(150, 210, 255, 0.24)');
+  grad.addColorStop(1, 'rgba(120, 190, 255, 0)');
+  g.fillStyle = grad;
+  g.beginPath(); g.arc(SWARM_R, SWARM_R, SWARM_R, 0, 2 * Math.PI); g.fill();
+  _swarmSprite = c;
+  return c;
+}
+
 export function drawPlayhead(ctx, pred, t, anim) {
   if (!pred || !pred.ok || t == null) return;
   const times = pred.times;
   ctx.save();
 
   let alive = 0;
-  ctx.fillStyle = 'rgba(150, 210, 255, 0.55)';
+  // The ensemble is drawn as DENSITY, not as 64 identifiable objects.
+  //
+  // Each future used to be a hard-edged 1.8 px disc, which read as stippling -- a texture,
+  // not a distribution -- and invited the question "which one is the ball?". The answer is
+  // that none of them is: what the screen is meant to carry is where the futures pile up
+  // and how far apart they have drifted. A soft sprite whose alpha falls to zero at its rim
+  // accumulates where futures agree and fades where they do not, so overlap IS the reading.
+  // One sprite is built once and blitted, because doing this with a per-call gradient or
+  // shadowBlur costs more per frame than the whole simulation does.
+  const sprite = swarmSprite();
   for (let i = 0; i < pred.samplePixels.length; i++) {
     const q = anim.sampleAtTime(pred.samplePixels[i], times, t, pred.sampleLeftAt[i]);
     if (!q) continue;
     alive++;
-    ctx.beginPath();
-    ctx.arc(q[0], q[1], 1.8, 0, 2 * Math.PI);
-    ctx.fill();
+    ctx.drawImage(sprite, q[0] - SWARM_R, q[1] - SWARM_R);
   }
 
   const left = t > (pred.nominalLeftAt ?? Infinity);
