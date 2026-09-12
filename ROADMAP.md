@@ -39,6 +39,14 @@ Scope — deliberately one screen and one gesture:
 Done when: the ghost path is drawn and the real ball, when actually pushed, ends up inside the band
 on ≥ 7 of 10 trials on one real table. That is the whole milestone.
 
+**Built: [`app/`](app/README.md). One command — `./app/run.sh`.** Every scope line above is
+implemented, including the drag (not hand tracking) and tap-to-segment (not detection).
+One addition the list did not name: a *Measure* mode that observes the first 0.30 s of a
+real roll and fits its velocity, because the "done when" above cannot be measured otherwise
+— a drag sets a speed the user invented, and no ball can be rolled to match it. The
+protocol is [`app/MILESTONE.md`](app/MILESTONE.md). **The bar itself is still unmeasured:
+it needs a ball.**
+
 **Explicitly cut from the proposed v0.1:** hand tracking, object *detection* (tap-to-segment replaces
 it), multi-object scenes, "simple plane detection" as a separate feature (depth gives it), cups.
 
@@ -51,6 +59,13 @@ That ships both marquee counterfactuals with zero AI.
 Estimate friction and restitution from observed motion instead of hard-coding them; report the fit
 residual as part of the confidence. This is the first point where the prediction becomes
 *scene-specific* rather than generic.
+
+**Promoted after v0.0 measured the error budget.** With friction guessed at ±40 %, the band
+is wide enough that a table with *three times* the assumed friction still lands inside the
+90 % stop region (`tests/uncertainty.test.js`), while 8° of plane error and 16° of
+focal-length error together move it less than the ball-diameter term does. Perception is not
+the constraint any more; the unmeasured physics parameter is. A 7-of-10 pass at this band
+width would prove very little, which is an argument for doing v0.2 before v0.1.
 
 ## v0.3 — Robustness, not features
 Low-texture tables (the biggest measured unknown), camera-motion detection and re-acquisition,
