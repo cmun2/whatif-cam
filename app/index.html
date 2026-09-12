@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>WhatIf Cam v0.0 - Ghost Ball</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <h1>WhatIf&nbsp;Cam <span class="ver">v0.0 &ldquo;Ghost Ball&rdquo;</span></h1>
+  <p class="creed">Everything drawn on the frame is a <strong>prediction</strong>, never a measurement.
+     When the app cannot tell you honestly, it refuses instead of drawing.</p>
+</header>
+
+<main>
+  <section id="stage">
+    <div id="canvasWrap">
+      <canvas id="view" width="640" height="480"></canvas>
+      <div id="banner" hidden></div>
+      <div id="hint">loading&hellip;</div>
+    </div>
+    <div id="legend">
+      <span><i class="sw sw-plane"></i>surface the plane was fitted to</span>
+      <span><i class="sw sw-path"></i>predicted path (dashed)</span>
+      <span><i class="sw sw-band"></i>90&nbsp;% band &mdash; 64 sampled futures</span>
+      <span><i class="sw sw-stop"></i>90&nbsp;% stop region</span>
+      <span><i class="sw sw-obs"></i>where the real ball stopped</span>
+    </div>
+  </section>
+
+  <aside id="panel">
+
+    <div class="card">
+      <h2>1 &middot; Frame</h2>
+      <div class="row btns">
+        <button id="srcDemo" class="on">Owner&rsquo;s photo</button>
+        <button id="srcSynth">Synthetic table</button>
+        <button id="srcCamera">Camera</button>
+      </div>
+      <div class="row">
+        <select id="photoPick"></select>
+        <label class="filebtn">own file<input id="fileInput" type="file" accept="image/*"></label>
+      </div>
+      <p class="note" id="srcNote"></p>
+    </div>
+
+    <div class="card">
+      <h2>2 &middot; Scene</h2>
+      <div class="row btns">
+        <button id="btnSetup" class="primary">Set up scene</button>
+        <button id="btnReset">Reset</button>
+      </div>
+      <p class="note">One depth pass and one plane fit, from a single frame. The neural nets
+        run <em>once</em>, here &mdash; never per frame.</p>
+      <div id="progress" hidden><div class="bar"><i></i></div><span></span></div>
+    </div>
+
+    <div class="card">
+      <h2>3 &middot; Ball, then flick</h2>
+      <div class="row btns">
+        <button id="modeTap" class="on">Tap a real object</button>
+        <button id="modeVirtual">Drop a virtual ball</button>
+      </div>
+      <p class="note" id="ballNote">Tap the ball in the frame, then drag from it to set a direction
+        and a speed. Drag further for a harder flick.</p>
+      <div class="row btns">
+        <button id="btnMeasure">Measure a real roll&hellip;</button>
+      </div>
+    </div>
+
+    <div class="card" id="numbersCard">
+      <h2>What this is assuming</h2>
+      <dl id="numbers"></dl>
+
+      <div class="ctl">
+        <label for="fovSlider">Assumed horizontal field of view <b id="fovVal">68&deg;</b></label>
+        <input id="fovSlider" type="range" min="35" max="115" step="0.5" value="68">
+        <div class="row btns tiny">
+          <button data-fov="68">phone 1&times; / webcam 68&deg;</button>
+          <button data-fov="78">wide webcam 78&deg;</button>
+          <button data-fov="104.3">iPhone 0.5&times; 104&deg;</button>
+        </div>
+        <p class="note">A browser is told <em>nothing</em> about the lens on a live camera stream
+          &mdash; <code>getUserMedia</code> reports resolution and frame rate and no optics at all.
+          So this is a guess, and the absolute plane orientation moves about
+          <b>2&deg; for every 4&deg;</b> this is wrong (m0/README.md &sect;6). A photo carries EXIF,
+          so in photo mode it is read, not guessed.</p>
+      </div>
+
+      <div class="ctl">
+        <label for="ballDia">Ball diameter <b id="ballDiaVal">40 mm</b></label>
+        <input id="ballDia" type="range" min="15" max="120" step="1" value="40">
+        <p class="note">Relative depth has no metres in it. This is where the scale comes from,
+          so it is also where &ldquo;how far before it stops&rdquo; comes from. 40&nbsp;mm is a
+          table-tennis ball.</p>
+      </div>
+
+      <div class="ctl" id="camHCtl" hidden>
+        <label for="camH">Camera height above the table <b id="camHVal">45 cm</b></label>
+        <input id="camH" type="range" min="15" max="150" step="1" value="45">
+        <p class="note">With a <em>virtual</em> ball there is nothing of known size in the picture,
+          so the scale falls back to this. It is a much weaker scale than a real ball, and the band
+          is widened accordingly.</p>
+      </div>
+
+      <div class="ctl">
+        <label for="friction">Rolling deceleration <b id="frictionVal">0.35 m/s&sup2;</b></label>
+        <input id="friction" type="range" min="0.05" max="1.2" step="0.01" value="0.35">
+        <p class="note"><b>Guessed, not measured</b> &mdash; and the widest term in the band.
+          Fitting it from the ball&rsquo;s own motion is v0.2 on the roadmap. Until then the app
+          samples &plusmn;40&nbsp;% around this instead of pretending to know it.
+          Measure mode prints what your table&rsquo;s friction actually was.</p>
+      </div>
+
+      <div class="ctl">
+        <label class="chk"><input id="showPlane" type="checkbox" checked> show the fitted surface</label>
+        <label class="chk"><input id="showSamples" type="checkbox" checked> show the 64 sampled futures</label>
+      </div>
+    </div>
+
+    <div class="card" id="issuesCard" hidden>
+      <h2>Why this may be wrong</h2>
+      <div id="issues"></div>
+    </div>
+
+    <div class="card" id="trialsCard" hidden>
+      <h2>The 7-of-10 bar</h2>
+      <p class="note">ROADMAP.md: <em>&ldquo;the real ball, when actually pushed, ends up inside the
+        band on &ge;&nbsp;7 of 10 trials on one real table.&rdquo;</em> That is this milestone&rsquo;s
+        whole definition of done, and it is measured here.</p>
+      <div id="trialSummary" class="score">no trials yet</div>
+      <table id="trials"><thead><tr>
+        <th>#</th><th>v&#8320;</th><th>pred</th><th>actual</th><th>band</th><th>a&#770;</th><th></th>
+      </tr></thead><tbody></tbody></table>
+      <div class="row btns">
+        <button id="btnExport">download trials.json</button>
+        <button id="btnClearTrials">clear</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </div>
+
+  </aside>
+</main>
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>

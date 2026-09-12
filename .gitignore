@@ -9,3 +9,12 @@ m0-out/
 photos/
 m0-demo/
 m0-work/
+
+# app: the runtime is vendored but not committed -- app/fetch-deps.sh puts it back
+app/vendor/ort/*.wasm
+app/vendor/ort/*.mjs
+app/vendor/ort/*.map
+
+# tests: fixtures are derived from photos/, which is itself gitignored
+tests/fixtures/
+.gstack/
