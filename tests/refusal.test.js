@@ -5,9 +5,11 @@ import { test, assert, note } from './harness.js';
 import * as Conf from '../app/src/confidence.js';
 import * as C from '../app/src/constants.js';
 
+// Typical of the owner's eleven photos, measured through the app's own code path with the
+// appearance gate on: coverage 0.23-0.29, flatness 0.27-0.36 %, bend 2.4-3.7 deg.
 const goodFit = {
-  ok: true, inlierFraction: 0.27, flatnessPct: 0.04, nearfarDeg: 2.6,
-  elevationDeg: 38, plane: { n: [0, -0.8, -0.6], d: -0.45 }, extent: 2,
+  ok: true, inlierFraction: 0.27, flatnessPct: 0.31, nearfarDeg: 3.2,
+  elevationDeg: 38, plane: { n: [0, -0.8, -0.6], d: -0.45 }, extent: 2, separated: true,
 };
 const goodTap = {
   ok: true, maskPx: 900, areaFraction: 0.01, touchesEdge: false,
@@ -22,7 +24,7 @@ test('a good scene raises nothing at all', () => {
 const planeCases = [
   ['no plane at all', { ok: false, reason: 'x' }, 'no-plane'],
   ['a surface that covers almost nothing', { ...goodFit, inlierFraction: 0.05 }, 'small-surface'],
-  ['a surface that is not flat', { ...goodFit, flatnessPct: 1.2 }, 'not-flat'],
+  ['a surface that is not flat', { ...goodFit, flatnessPct: 2.4 }, 'not-flat'],
   ['a surface that is bent', { ...goodFit, nearfarDeg: 20 }, 'bent'],
   ['a camera nearly level with the table', { ...goodFit, elevationDeg: 9 }, 'too-shallow'],
   ['a camera nearly straight down', { ...goodFit, elevationDeg: 80 }, 'too-steep'],
@@ -40,7 +42,9 @@ for (const [name, fit, code] of planeCases) {
 }
 
 const warnCases = [
-  ['a noisy depth map', { ...goodFit, flatnessPct: 0.4 }, 'flatness'],
+  ['a surface that could not be separated from its surroundings',
+    { ...goodFit, separated: false, separationNote: 'no image was supplied.' }, 'unseparated'],
+  ['a noisy depth map', { ...goodFit, flatnessPct: 0.9 }, 'flatness'],
   ['a slightly bent surface', { ...goodFit, nearfarDeg: 8 }, 'bend'],
   ['an untested camera angle', { ...goodFit, elevationDeg: 28 }, 'untested-angle'],
 ];

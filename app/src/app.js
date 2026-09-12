@@ -20,6 +20,7 @@ import * as Src from './sources.js';
 import { MotionWatch } from './motion.js';
 import { Tracker } from './tracker.js';
 import { gray } from './imageops.js';
+import * as Anim from './anim.js';
 import * as C from './constants.js';
 
 const $ = (id) => document.getElementById(id);
@@ -40,6 +41,7 @@ const S = {
   fov: { deg: C.DEFAULT_HFOV_DEG, source: 'assumed', sigma: C.HFOV_SIGMA_ASSUMED_DEG },
   depthModel: 'int8',
   disp: null,
+  lum: null,
   fit: null,
   planeSigma: C.PLANE_SIGMA_INT8_DEG,
   planeLayer: null,
@@ -58,7 +60,11 @@ const S = {
   observed: null,
   running: false,
   enc: null,
+  clock: null,
 };
+
+// The playhead. Redrawing on every tick of it is the only thing it does.
+S.clock = new Anim.Clock(() => { paintTransport(); draw(); ensureLoop(); });
 
 // ---------------------------------------------------------------- small helpers
 function log(msg) {
@@ -113,6 +119,11 @@ function updateNumbers() {
       (f.nearfarDeg ?? 0) > C.NEARFAR_WARN_DEG ? 'flag' : 'ok'));
     rows.push(num('surface coverage', `${(100 * f.inlierFraction).toFixed(0)} % of frame`,
       f.inlierFraction < C.INLIER_FRACTION_REFUSE ? 'bad' : 'ok'));
+    rows.push(num('&nbsp;&nbsp;appearance gate',
+      f.separated
+        ? `on, dropped ${Math.max(0, Math.round(100 * (f.rawInlierFraction - f.inlierFraction)))} % of frame`
+        : 'OFF - surface is geometry only',
+      f.separated ? 'ok' : 'flag'));
     rows.push(num('plane error used', `&plusmn;${S.planeSigma.toFixed(1)}&deg; 1&sigma;`));
   } else {
     rows.push(num('plane', 'not fitted yet', 'flag'));
@@ -246,10 +257,12 @@ async function loadPhoto(url) {
 
 // ---------------------------------------------------------------- setup
 function resetScene() {
-  S.disp = null; S.fit = null; S.planeLayer = null; S.supportMask = null;
+  S.disp = null; S.lum = null; S.fit = null; S.planeLayer = null; S.supportMask = null;
   S.ball = null; S.launch = null; S.pred = null; S.enc = null;
   S.observed = null; S.measure = null; S.motionState = null;
   S.stage = 'need-setup';
+  S.clock.pause();
+  showTransport(false);
   showIssues([]);
   banner(null);
   updateNumbers();
@@ -271,17 +284,21 @@ async function setupScene() {
 
     progress(0.8, 'fitting the support plane');
     const K = Geo.intrinsics(S.fov.deg, S.frame.w, S.frame.h);
-    const fit = PF.fitSupportPlane(S.disp, S.frame.w, S.frame.h, K, { step: 3 });
+    // The luminance image goes in with the depth map. Geometry alone cannot tell the
+    // tabletop from a carpet that happens to be coplanar with it -- see planefit.js.
+    S.lum = gray(S.frame.rgba, S.frame.w, S.frame.h);
+    const fit = PF.fitSupportPlane(S.disp, S.frame.w, S.frame.h, K, { step: 3, lum: S.lum });
     S.fit = fit;
     const issues = Conf.checkPlane(fit);
     S.planeSigma = Conf.planeSigmaFor(fit, Dep.DEPTH_MODELS[S.depthModel].planeSigmaDeg);
 
     if (fit.ok) {
       S.planeLayer = R.makePlaneLayer(fit, S.frame.w, S.frame.h);
-      S.supportMask = buildSupportMask(fit, S.frame.w, S.frame.h);
+      S.supportMask = PF.supportMaskFrom(fit, S.frame.w, S.frame.h);
       log(`plane: elev ${fit.elevationDeg.toFixed(1)} deg, flat ${fit.flatnessPct.toFixed(3)} %, `
-        + `bend ${(fit.nearfarDeg ?? -1).toFixed(2)} deg, ${(100 * fit.inlierFraction).toFixed(0)} % of frame, `
-        + `${(performance.now() - t0).toFixed(0)} ms total`);
+        + `bend ${(fit.nearfarDeg ?? -1).toFixed(2)} deg, ${(100 * fit.inlierFraction).toFixed(0)} % of frame`
+        + (fit.separated ? ` (${(100 * fit.rawInlierFraction).toFixed(0)} % before the appearance gate)` : ' [NOT separated]')
+        + `, ${(performance.now() - t0).toFixed(0)} ms total`);
       S.motion.setReference(S.frame.rgba, S.frame.w, S.frame.h);
     }
     progress(null);
@@ -305,22 +322,6 @@ async function setupScene() {
   } finally {
     $('btnSetup').disabled = false;
   }
-}
-
-function buildSupportMask(fit, w, h) {
-  const m = new Uint8Array(w * h);
-  const s = fit.step;
-  const pad = 2 * s;
-  for (const [u, v] of fit.inlierPixels) {
-    for (let dv = -pad; dv <= pad; dv++) {
-      const y = v + dv; if (y < 0 || y >= h) continue;
-      for (let du = -pad; du <= pad; du++) {
-        const x = u + du; if (x < 0 || x >= w) continue;
-        m[y * w + x] = 1;
-      }
-    }
-  }
-  return m;
 }
 
 async function ensureSegmenter() {
@@ -401,8 +402,8 @@ function buildScene() {
   };
 }
 
-function updatePrediction() {
-  if (!S.ball || !S.launch || !S.fit?.ok) { S.pred = null; return; }
+function updatePrediction(opts = {}) {
+  if (!S.ball || !S.launch || !S.fit?.ok) { S.pred = null; showTransport(false); return; }
   const pred = Unc.predict(buildScene(), S.launch);
   if (!pred.ok) log('prediction: ' + pred.reason);
   S.pred = pred;
@@ -414,7 +415,38 @@ function updatePrediction() {
   ];
   showIssues(issues);
   if (Conf.worst(issues) === 'refuse') S.pred = null;
+
+  if (S.pred && S.pred.ok) {
+    const duration = S.pred.times[S.pred.times.length - 1];
+    if (opts.animate) {
+      S.clock.reset(duration, true);
+      ensureLoop();
+    } else {
+      // Mid-drag: show the whole prediction at rest rather than restarting the playback on
+      // every pointer move.
+      S.clock.setDuration(duration);
+      S.clock.t = duration;
+      S.clock.playing = false;
+    }
+    showTransport(true);
+  } else {
+    showTransport(false);
+  }
+  paintTransport();
   updateNumbers();
+}
+
+// ---------------------------------------------------------------- transport
+function showTransport(on) {
+  $('transport').hidden = !on;
+  $('motionNote').hidden = !(on && S.clock.reducedMotion);
+}
+function paintTransport() {
+  const d = S.clock.duration, t = S.clock.t;
+  $('btnPlay').innerHTML = S.clock.playing ? '&#10073;&#10073;&nbsp;pause' : '&#9654;&nbsp;play';
+  $('scrub').value = d > 0 ? Math.round((1000 * t) / d) : 0;
+  const off = S.pred && S.pred.ok && t > (S.pred.nominalLeftAt ?? Infinity);
+  $('timeRead').textContent = `${t.toFixed(2)} / ${d.toFixed(2)} s` + (off ? '  off-surface' : '');
 }
 
 // ---------------------------------------------------------------- drawing
@@ -428,20 +460,35 @@ function draw() {
   if (S.measure?.track?.length) R.drawTrack(ctx, S.measure.track);
   R.drawBall(ctx, S.ball);
   if (S.drag) R.drawDrag(ctx, S.ball?.contactPixel, S.drag);
-  if (S.pred) R.drawPrediction(ctx, S.pred, { showSamples: $('showSamples').checked });
+  if (S.pred) {
+    R.drawPrediction(ctx, S.pred, { showSamples: $('showSamples').checked });
+    if (!$('transport').hidden) R.drawPlayhead(ctx, S.pred, S.clock.t, Anim);
+  }
   if (S.observed) R.drawObserved(ctx, S.observed.px, S.observed.inside);
 }
 
 // ---------------------------------------------------------------- live loop
 let rafId = null;
-function startLoop() { if (!rafId) rafId = requestAnimationFrame(tick); }
+function startLoop() { ensureLoop(); }
 function stopLoop() { if (rafId) cancelAnimationFrame(rafId); rafId = null; }
 
+/** One rAF loop, shared by the live sources and the playhead. It stops when neither needs it. */
+function ensureLoop() {
+  const needed = !!S.sourceObj?.grab || S.clock.playing;
+  if (needed && !rafId) rafId = requestAnimationFrame(tick);
+  if (!needed && rafId) { cancelAnimationFrame(rafId); rafId = null; }
+}
+
 function tick(ts) {
-  rafId = requestAnimationFrame(tick);
+  rafId = null;
   const tSec = ts / 1000;
+  const advanced = S.clock.advance(ts);
   const f = S.sourceObj?.grab?.(tSec);
-  if (!f) return;
+  if (!f) {
+    if (advanced) { paintTransport(); draw(); }
+    ensureLoop();
+    return;
+  }
   S.frame = f;
 
   if (S.fit?.ok) {
@@ -459,7 +506,9 @@ function tick(ts) {
   }
 
   if (S.measure) stepMeasure(f, tSec);
+  if (advanced) paintTransport();
   draw();
+  ensureLoop();
 }
 
 // ---------------------------------------------------------------- Measure mode
@@ -537,7 +586,7 @@ function stepMeasure(f, tSec) {
       // The samples are silhouette CENTRES; uncertainty.js intersects the plane offset by
       // one radius to turn each into a contact point, so nothing is fudged here.
       S.launch = { mode: 'track', samples: M.samples.map((s) => ({ ...s })), pixelSigma: 1.0 };
-      updatePrediction();
+      updatePrediction({ animate: true });
       M.phase = 'settling';
       M.predAt = tSec;
       hint('predicted - waiting for the ball to stop');
@@ -674,7 +723,7 @@ cv.addEventListener('pointerdown', async (ev) => {
   const [u, v] = toCanvas(ev);
   if (S.stage === 'need-setup') { hint('press "Set up scene" first'); return; }
   if (S.stage === 'need-ball' || ev.shiftKey) { await placeBall(u, v); return; }
-  cv.setPointerCapture(ev.pointerId);
+  try { cv.setPointerCapture(ev.pointerId); } catch { /* not all pointers can be captured */ }
   S.drag = [u, v];
   draw();
 });
@@ -688,6 +737,8 @@ cv.addEventListener('pointermove', (ev) => {
 cv.addEventListener('pointerup', () => {
   if (!S.drag) return;
   S.drag = null;
+  // The flick is committed: now play it.
+  updatePrediction({ animate: true });
   draw();
 });
 
@@ -709,10 +760,10 @@ function refit() {
   // silently leaving a plane that was computed under a different camera.
   if (S.disp && S.frame) {
     const K = Geo.intrinsics(S.fov.deg, S.frame.w, S.frame.h);
-    S.fit = PF.fitSupportPlane(S.disp, S.frame.w, S.frame.h, K, { step: 3 });
+    S.fit = PF.fitSupportPlane(S.disp, S.frame.w, S.frame.h, K, { step: 3, lum: S.lum });
     if (S.fit.ok) {
       S.planeLayer = R.makePlaneLayer(S.fit, S.frame.w, S.frame.h);
-      S.supportMask = buildSupportMask(S.fit, S.frame.w, S.frame.h);
+      S.supportMask = PF.supportMaskFrom(S.fit, S.frame.w, S.frame.h);
       S.planeSigma = Conf.planeSigmaFor(S.fit, Dep.DEPTH_MODELS[S.depthModel].planeSigmaDeg);
     }
     updatePrediction();
@@ -729,6 +780,12 @@ for (const [id, fmt, cb] of [
   el.addEventListener('input', upd);
   out.innerHTML = fmt(el.value);
 }
+$('btnPlay').addEventListener('click', () => { S.clock.toggle(); paintTransport(); ensureLoop(); });
+$('btnReplay').addEventListener('click', () => { S.clock.replay(); paintTransport(); ensureLoop(); });
+$('scrub').addEventListener('input', (e) => {
+  S.clock.seek((Number(e.target.value) / 1000) * S.clock.duration);
+  paintTransport();
+});
 $('showPlane').addEventListener('change', draw);
 $('showSamples').addEventListener('change', draw);
 $('btnSetup').addEventListener('click', setupScene);
@@ -821,7 +878,7 @@ window.whatif = { state: S, Geo, PF, Unc, Conf, Obj, C };
         const px = Geo.planeToPixel(K, fr, target);
         if (px) {
           S.launch = { mode: 'flick', releasePixel: px, pixelSigma: 2 };
-          updatePrediction();
+          updatePrediction({ animate: true });
           draw();
           hint('simulated flick - drag on the image to try your own');
           log('demo: virtual ball + simulated flick on the owner\'s own table.');

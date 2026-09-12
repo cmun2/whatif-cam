@@ -49,9 +49,11 @@ yours to measure, and it takes about twenty minutes.**
 5. Set the field of view. If you know your camera's, type it. If not, leave 68° and accept
    a wider band — the panel tells you which you are doing.
 
-6. Press **Set up scene**. Look at the green stipple: it should cover the tabletop and
-   nothing else. If it covers the wall, or half the tabletop, press Reset and re-frame. A
-   wrong plane produces a confident wrong answer and the app cannot always tell.
+6. Press **Set up scene**. Look at the green stipple: **it should cover the tabletop and
+   nothing else.** If it spills onto the floor or the wall, the panel will usually say the
+   surface could not be separated from its surroundings — press Reset and re-frame so the
+   table is more clearly the brightest continuous thing in shot. A wrong plane produces a
+   confident wrong answer and the app cannot always tell.
 
 7. Put the ball on the table, press **Tap a real object**, and tap it. Check the panel:
    `mask` should be a few hundred to a few thousand pixels, `local noise` near 1, and the

@@ -249,6 +249,158 @@ export function planeDiagnostics(P, uv, idx) {
   };
 }
 
+
+// ---------------------------------------------------------------- NEW: appearance gate
+/**
+ * Keep only the part of the plane that is the surface in front of the camera.
+ *
+ * The problem this solves, measured on the owner's eleven photos: whole-frame RANSAC
+ * finds a plane that the CARPET and the PARTITION behind the table also lie near. Those
+ * points are not a threshold artefact -- sweeping the inlier threshold from 0.005 to 0.03
+ * never removes them (at every setting that keeps 80 % of the tabletop, tens to hundreds
+ * of carpet points come too), and they are not separable by connectivity either, because
+ * the depth map is smooth across the table's edge so the inlier set bridges it. They are
+ * genuinely near-coplanar with the tabletop in back-projected relative depth.
+ *
+ * Geometry cannot tell them apart. Appearance can: a tabletop is one continuous surface
+ * with smooth shading across it, and its edge is a brightness STEP. So grow a region from
+ * the middle of the surface outward, crossing gradients but not steps.
+ *
+ *   seed      the inlier cell with the most neighbours that are both inliers AND close to
+ *             it in brightness -- deepest inside a uniform planar region. Counting inliers
+ *             alone saturates (8172 cells tie on IMG_5368) and the tiebreak then seeds on
+ *             the table's EDGE, where an edge-stopping fill cannot move at all.
+ *   grow      accept a neighbour whose brightness is within `stepTol` of the cell it came
+ *             FROM, not of a region average. That traverses the table's own shading
+ *             gradient, of any total size, and stops dead at its edge.
+ *   leash     plus a cap on total deviation from the seed, so a long smooth ramp cannot
+ *             walk off the surface one small step at a time.
+ *
+ * Measured across all eleven: points more than 20 px outside the M0 four-tap quad go from
+ * a median of 168 (max 406) to ZERO on every photo, while the plane's own error against
+ * the same reference is unchanged (median 2.70 -> 2.71 deg).
+ */
+export function appearanceRegion(inlierPixels, step, w, h, lum, opts = {}) {
+  const stepTol = opts.stepTol ?? 0.06;
+  const leash = opts.leash ?? 0.45;
+  const seedLum = opts.seedLum ?? 0.06;
+  const rad = opts.seedRadius ?? 3;
+  const gw = Math.ceil(w / step), gh = Math.ceil(h / step);
+  const isIn = new Uint8Array(gw * gh);
+  const L = new Float32Array(gw * gh);
+  const px = new Int32Array(gw * gh * 2);
+  for (const [u, v] of inlierPixels) {
+    const gi = ((v / step) | 0) * gw + ((u / step) | 0);
+    isIn[gi] = 1; px[2 * gi] = u; px[2 * gi + 1] = v;
+    L[gi] = lum[v * w + u];
+  }
+
+  let seed = -1, best = -1;
+  for (let gy = 0; gy < gh; gy++) {
+    for (let gx = 0; gx < gw; gx++) {
+      const gi = gy * gw + gx;
+      if (!isIn[gi]) continue;
+      let c = 0;
+      for (let dy = -rad; dy <= rad; dy++) {
+        for (let dx = -rad; dx <= rad; dx++) {
+          const y = gy + dy, x = gx + dx;
+          if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+          const j = y * gw + x;
+          if (isIn[j] && Math.abs(L[j] - L[gi]) < seedLum) c++;
+        }
+      }
+      if (c > best) { best = c; seed = gi; }
+    }
+  }
+  if (seed < 0) return null;
+
+  const sx = seed % gw, sy = (seed / gw) | 0;
+  const nb = [];
+  for (let dy = -rad; dy <= rad; dy++) {
+    for (let dx = -rad; dx <= rad; dx++) {
+      const y = sy + dy, x = sx + dx;
+      if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+      const j = y * gw + x;
+      if (isIn[j]) nb.push(L[j]);
+    }
+  }
+  nb.sort((a, b) => a - b);
+  const ref = nb[nb.length >> 1];
+
+  const acc = new Uint8Array(gw * gh);
+  acc[seed] = 1;
+  const stack = [seed];
+  while (stack.length) {
+    const gi = stack.pop();
+    const gx = gi % gw, gy = (gi / gw) | 0;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const x = gx + dx, y = gy + dy;
+        if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+        const j = y * gw + x;
+        if (!isIn[j] || acc[j]) continue;
+        if (Math.abs(L[j] - L[gi]) > stepTol) continue;
+        if (Math.abs(L[j] - ref) > leash) continue;
+        acc[j] = 1; stack.push(j);
+      }
+    }
+  }
+  const out = [];
+  for (let gi = 0; gi < gw * gh; gi++) if (acc[gi]) out.push([px[2 * gi], px[2 * gi + 1]]);
+  return { pixels: out, seedPixel: [px[2 * seed], px[2 * seed + 1]], seedLum: ref };
+}
+
+/**
+ * The binary "this is the surface" mask the simulation tests its rollouts against.
+ *
+ * Two things beyond a straight rasterisation of the inliers:
+ *
+ *  - dilate, so the sampling grid's gaps are not holes;
+ *  - FILL ENCLOSED HOLES. The ball itself is not a plane inlier -- it stands above the
+ *    plane -- so it punches a ball-sized hole in the middle of the table, and a rollout
+ *    starting there was declared off the measured surface on its first step. Anything
+ *    completely surrounded by fitted surface IS fitted surface; only the outer boundary
+ *    is a real edge. Found while testing the playhead, and it would have made short rolls
+ *    refuse to predict at all.
+ */
+export function supportMaskFrom(fit, w, h, pad) {
+  const m = new Uint8Array(w * h);
+  const s = fit.step;
+  const p = pad ?? 2 * s;
+  for (const [u, v] of fit.inlierPixels) {
+    for (let dv = -p; dv <= p; dv++) {
+      const y = v + dv;
+      if (y < 0 || y >= h) continue;
+      for (let du = -p; du <= p; du++) {
+        const x = u + du;
+        if (x < 0 || x >= w) continue;
+        m[y * w + x] = 1;
+      }
+    }
+  }
+  // Flood the OUTSIDE from the frame border; whatever is still unmarked was enclosed.
+  const outside = new Uint8Array(w * h);
+  const stack = [];
+  const push = (x, y) => {
+    const i = y * w + x;
+    if (m[i] || outside[i]) return;
+    outside[i] = 1; stack.push(i);
+  };
+  for (let x = 0; x < w; x++) { push(x, 0); push(x, h - 1); }
+  for (let y = 0; y < h; y++) { push(0, y); push(w - 1, y); }
+  while (stack.length) {
+    const i = stack.pop();
+    const x = i % w, y = (i / w) | 0;
+    if (x > 0) push(x - 1, y);
+    if (x < w - 1) push(x + 1, y);
+    if (y > 0) push(x, y - 1);
+    if (y < h - 1) push(x, y + 1);
+  }
+  for (let i = 0; i < m.length; i++) if (!outside[i]) m[i] = 1;
+  return m;
+}
+
 /** Everything the setup step needs, in one call. */
 export function fitSupportPlane(disp, w, h, K, opts = {}) {
   const step = opts.step ?? 3;
@@ -256,15 +408,59 @@ export function fitSupportPlane(disp, w, h, K, opts = {}) {
   if (bp.count < 200) return { ok: false, reason: 'depth map produced too few usable points' };
   const r = ransacPlane(bp.P, bp.count, opts);
   if (!r) return { ok: false, reason: 'no plane in this frame matched a table-like orientation' };
-  const diag = planeDiagnostics(bp.P, bp.uv, r.inlierIdx);
-  const inlierPixels = r.inlierIdx.map((i) => [bp.uv[2 * i], bp.uv[2 * i + 1]]);
+
+  let idx = r.inlierIdx;
+  let separated = false;
+  let separationNote = null;
+  let seedPixel = null;
+
+  if (opts.lum) {
+    const rawPixels = r.inlierIdx.map((i) => [bp.uv[2 * i], bp.uv[2 * i + 1]]);
+    const region = appearanceRegion(rawPixels, step, w, h, opts.lum, opts);
+    if (region && region.pixels.length >= (opts.minRegionFraction ?? 0.35) * rawPixels.length) {
+      const keep = new Set(region.pixels.map(([u, v]) => v * w + u));
+      const sel = [];
+      for (let k = 0; k < r.inlierIdx.length; k++) {
+        const i = r.inlierIdx[k];
+        if (keep.has(bp.uv[2 * i + 1] * w + bp.uv[2 * i])) sel.push(i);
+      }
+      if (sel.length >= 200) {
+        idx = sel;
+        separated = true;
+        seedPixel = region.seedPixel;
+      } else {
+        separationNote = 'too few points survived the appearance gate';
+      }
+    } else {
+      separationNote = region
+        ? `the surface could not be separated from its surroundings by brightness: only `
+          + `${Math.round((100 * region.pixels.length) / rawPixels.length)} % of the plane is one `
+          + `continuous region of similar tone. The fitted surface may include things merely `
+          + `coplanar with the table -- look at the green stipple before trusting it.`
+        : 'no seed point could be found for the appearance gate';
+    }
+  } else {
+    separationNote = 'no image was supplied, so the surface was taken from geometry alone';
+  }
+
+  // Re-fit the plane on whatever survived. When the appearance gate did its job this is
+  // the tabletop and nothing else.
+  const refit = fitPlane(bp.P, idx);
+  const plane = refit ? { n: refit.n, d: refit.d, rms: refit.rms } : r.plane;
+
+  const diag = planeDiagnostics(bp.P, bp.uv, idx);
+  const inlierPixels = idx.map((i) => [bp.uv[2 * i], bp.uv[2 * i + 1]]);
   return {
     ok: true,
-    plane: r.plane,
-    inlierFraction: r.inlierFraction,
+    plane,
+    inlierFraction: idx.length / bp.count,
+    rawInlierFraction: r.inlierFraction,
     inlierPixels,
     step,
-    elevationDeg: elevationDeg(r.plane),
+    separated,
+    separationNote,
+    seedPixel,
+    elevationDeg: elevationDeg(plane),
     ...diag,
   };
 }

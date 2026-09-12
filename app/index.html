@@ -21,11 +21,22 @@
       <div id="banner" hidden></div>
       <div id="hint">loading&hellip;</div>
     </div>
+    <div id="transport" hidden>
+      <button id="btnPlay" title="play / pause the prediction">&#9654;&nbsp;play</button>
+      <button id="btnReplay" title="replay from the start">&#8635;</button>
+      <input id="scrub" type="range" min="0" max="1000" value="0" step="1"
+             aria-label="scrub the prediction">
+      <span id="timeRead">0.00 / 0.00 s</span>
+    </div>
+    <p class="note" id="motionNote" hidden>Your system asks for reduced motion, so this does
+      not play by itself. Press play, or drag the scrubber.</p>
+
     <div id="legend">
       <span><i class="sw sw-plane"></i>surface the plane was fitted to</span>
       <span><i class="sw sw-path"></i>predicted path (dashed)</span>
       <span><i class="sw sw-band"></i>90&nbsp;% band &mdash; 64 sampled futures</span>
       <span><i class="sw sw-stop"></i>90&nbsp;% stop region</span>
+      <span><i class="sw sw-swarm"></i>the 64 futures at the instant being played</span>
       <span><i class="sw sw-obs"></i>where the real ball stopped</span>
     </div>
   </section>

@@ -54,8 +54,26 @@ def main():
         ))
         print(f"  {stem}  {W}x{H}  fov {fov:.1f}  quad normal {np.round(n_quad,4)}")
     json.dump(index, open(os.path.join(OUT, "index.json"), "w"), indent=1)
+    export_rgb()
     print(f"wrote {len(index)} fixtures to tests/fixtures/ using {MODEL}")
 
 
 if __name__ == "__main__":
     main()
+
+
+def export_rgb():
+    """Also export the RGB frame at working resolution, as raw RGB bytes.
+
+    The plane fit needs image appearance, not only geometry: the carpet beside the
+    owner's table is genuinely near-coplanar with it in back-projected relative depth,
+    so no residual threshold separates them (measured: at every threshold that keeps
+    80 % of the tabletop, tens to hundreds of carpet points come with it).
+    """
+    import glob
+    from PIL import Image
+    for p in sorted(glob.glob(os.path.join(ROOT, "photos", "*.JPG"))):
+        img, _, _, _ = PF.load_image(p, 640)
+        stem = os.path.splitext(os.path.basename(p))[0]
+        np.asarray(img, np.uint8).tofile(os.path.join(OUT, stem + ".rgb"))
+    print("wrote RGB frames")

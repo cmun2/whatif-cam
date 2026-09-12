@@ -12,6 +12,7 @@ import * as S from '../app/src/synth.js';
 import * as PF from '../app/src/planefit.js';
 import * as G from '../app/src/geometry.js';
 import * as Unc from '../app/src/uncertainty.js';
+import { gray } from '../app/src/imageops.js';
 import * as C from '../app/src/constants.js';
 
 function build(opts = {}) {
@@ -19,7 +20,8 @@ function build(opts = {}) {
   const ballR = 0.02;
   const p0 = opts.p0 ?? [-0.1, 0.5];
   const fr = S.renderFrame(scene, p0, ballR);
-  const fit = PF.fitSupportPlane(S.disparityFrom(fr), scene.W, scene.H, scene.K, { step: 3 });
+  const fit = PF.fitSupportPlane(S.disparityFrom(fr), scene.W, scene.H, scene.K,
+    { step: 3, lum: gray(fr.rgba, fr.w, fr.h) });
   // Contact point and pixel radius as the app would derive them from the rendered ball.
   const contact3 = G.sub(
     G.scale3(G.ray(scene.K, fr.ballPixel[0], fr.ballPixel[1]), 0), [0, 0, 0]);

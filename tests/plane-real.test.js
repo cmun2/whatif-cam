@@ -23,12 +23,55 @@ if (!existsSync(indexPath)) {
     'no tests/fixtures -- run: .venv/bin/python tests/make-fixtures.py');
 } else {
   const index = JSON.parse(readFileSync(indexPath, 'utf8'));
+
+  /** Is a pixel inside the M0 four-tap quad, and if not, how far outside? */
+  const inQuad = (q, u, v) => {
+    let inside = false;
+    for (let i = 0, j = 3; i < 4; j = i++) {
+      const [xi, yi] = q[i], [xj, yj] = q[j];
+      if ((yi > v) !== (yj > v) && u < ((xj - xi) * (v - yi)) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  };
+  const distToQuad = (q, u, v) => {
+    let best = Infinity;
+    for (let i = 0, j = 3; i < 4; j = i++) {
+      const [ax, ay] = q[j], [bx, by] = q[i];
+      const dx = bx - ax, dy = by - ay;
+      const t = Math.max(0, Math.min(1, ((u - ax) * dx + (v - ay) * dy) / (dx * dx + dy * dy)));
+      best = Math.min(best, Math.hypot(u - (ax + t * dx), v - (ay + t * dy)));
+    }
+    return best;
+  };
+
   const results = index.map((f) => {
     const b = readFileSync(new URL(`${f.stem}.disp.f32`, dir));
     const disp = new Float32Array(b.buffer, b.byteOffset, b.length / 4);
+    const rgbPath = new URL(`${f.stem}.rgb`, dir);
+    let lum = null;
+    if (existsSync(rgbPath)) {
+      const rgb = readFileSync(rgbPath);
+      lum = new Float32Array(f.w * f.h);
+      for (let i = 0; i < lum.length; i++) {
+        lum[i] = (0.299 * rgb[3 * i] + 0.587 * rgb[3 * i + 1] + 0.114 * rgb[3 * i + 2]) / 255;
+      }
+    }
     const K = G.intrinsics(f.fov_deg, f.w, f.h);
-    const fit = PF.fitSupportPlane(disp, f.w, f.h, K, { step: 3 });
-    return { f, fit, err: G.angleBetween(fit.plane.n, f.quad_normal), issues: Conf.checkPlane(fit) };
+    const fit = PF.fitSupportPlane(disp, f.w, f.h, K, { step: 3, lum });
+    const raw = PF.fitSupportPlane(disp, f.w, f.h, K, { step: 3 });
+    const leak = (ft) => ft.inlierPixels.filter(([u, v]) =>
+      !inQuad(f.quad, u, v) && distToQuad(f.quad, u, v) > 20).length;
+    const onTable = (ft) => ft.inlierPixels.filter(([u, v]) => inQuad(f.quad, u, v)).length;
+    let qtot = 0;
+    for (let v = 0; v < f.h; v += 3) for (let u = 0; u < f.w; u += 3) if (inQuad(f.quad, u, v)) qtot++;
+    return {
+      f, fit, raw,
+      err: G.angleBetween(fit.plane.n, f.quad_normal),
+      rawErr: G.angleBetween(raw.plane.n, f.quad_normal),
+      leak: leak(fit), rawLeak: leak(raw),
+      recall: onTable(fit) / qtot,
+      issues: Conf.checkPlane(fit),
+    };
   });
   const errs = results.map((r) => r.err).sort((a, b) => a - b);
   const median = errs[errs.length >> 1];
@@ -62,6 +105,38 @@ if (!existsSync(indexPath)) {
     }
     const fr = results.map((r) => r.fit.inlierFraction);
     note(`surface coverage ${(100 * Math.min(...fr)).toFixed(0)}-${(100 * Math.max(...fr)).toFixed(0)} % of frame`);
+  });
+
+  test('the fitted surface is the TABLETOP, not everything coplanar with it', () => {
+    // The defect this catches: whole-frame RANSAC finds a plane that the carpet beside the
+    // owner's table and the partition behind it also lie near, so the app claimed a surface
+    // that reached up to 188 px past the table's edge and predicted the ball rolling onto
+    // the floor. No inlier threshold separates them -- they really are near-coplanar.
+    // Appearance does.
+    for (const r of results) {
+      assert(r.fit.separated, `${r.f.stem}: the appearance gate fell back`);
+      assert(r.leak === 0,
+        `${r.f.stem}: ${r.leak} fitted points more than 20 px outside the tabletop`);
+      assert(r.recall > 0.75,
+        `${r.f.stem}: kept only ${(100 * r.recall).toFixed(0)} % of the tabletop`);
+    }
+    const rawLeaks = results.map((r) => r.rawLeak).sort((a, b) => a - b);
+    const recalls = results.map((r) => r.recall);
+    note(`points >20 px off the tabletop: geometry alone median ${rawLeaks[rawLeaks.length >> 1]} `
+      + `(max ${rawLeaks[rawLeaks.length - 1]}) -> with the appearance gate, 0 on every photo`);
+    note(`tabletop kept: ${(100 * Math.min(...recalls)).toFixed(0)}-${(100 * Math.max(...recalls)).toFixed(0)} %`);
+  });
+
+  test('and cleaning up the surface does not move the plane', () => {
+    // Worth stating plainly: the leak was neither flattering nor punishing the plane
+    // number. 2.7 deg was right, for the wrong-looking reason.
+    const e = results.map((r) => r.err).sort((a, b) => a - b);
+    const re = results.map((r) => r.rawErr).sort((a, b) => a - b);
+    const med = (a) => a[a.length >> 1];
+    assert(Math.abs(med(e) - med(re)) < 0.15,
+      `median moved ${med(re).toFixed(2)} -> ${med(e).toFixed(2)}`);
+    note('per photo, geometry only -> appearance gated: '
+      + results.map((r) => `${r.f.stem.slice(4)} ${r.rawErr.toFixed(2)}->${r.err.toFixed(2)}`).join(', '));
   });
 
   test('the recovered elevation matches what M0 measured for these photos', () => {

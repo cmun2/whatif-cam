@@ -244,6 +244,10 @@ export function predict(scene, launch, opts = {}) {
     stopT: r.traj.t[r.traj.t.length - 1],
     left: r.traj.leftSurface,
     timedOut: r.traj.timedOut,
+    // The instant this future ran off the surface the plane was fitted to, or Infinity if
+    // it never did. The playhead stops drawing it there rather than carrying it on over
+    // ground nothing has been measured about.
+    leftAt: r.traj.leftSurface ? r.traj.t[r.traj.t.length - 1] : Infinity,
     speed: r.speed,
   }));
   for (const pr of perRun) pr.pixels = pr.plane.map((pm) => pr.toPixel(pm));
@@ -313,7 +317,13 @@ export function predict(scene, launch, opts = {}) {
     nominalStopPx: perRun[0].toPixel(perRun[0].stopM),
     nominalSpeed: perRun[0].speed,
     nominalStopTime: perRun[0].stopT,
+    nominalLeftAt: perRun[0].leftAt,
     samplePixels: perRun.slice(1).map((pr) => pr.pixels),
+    sampleLeftAt: perRun.slice(1).map((pr) => pr.leftAt),
+    // In-plane metres as well as pixels, so the playhead can say how far apart the futures
+    // are AT THE INSTANT BEING PLAYED, in centimetres, rather than leaving the viewer to
+    // infer it from a cloud of dots.
+    samplePlaneM: perRun.slice(1).map((pr) => pr.plane),
     meanPixels: mean,
     bandPolygon,
     stopPx: hasStop ? stopPx : [],

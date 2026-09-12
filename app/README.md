@@ -37,11 +37,32 @@ falls back to the synthetic table, which needs no files at all.
 | | |
 |---|---|
 | green stipple | the pixels the plane was actually fitted to. If this is not your table, nothing below it is worth reading. |
+| hollow white ring | the playhead: where the middle of the ensemble is at the instant being played. Never a solid ball, because it is not a measured position. |
+| blue dots | the 64 futures at that same instant. They start together and drift apart; that drift is the band. |
 | dashed blue line | the prediction. Dashed, and labelled `PREDICTION - not a measurement`, because it is not a track. |
 | pale blue band | the 90 % band, drawn from **64 complete re-rollouts** with every assumed quantity re-drawn. It widens with time because the uncertainty does. |
 | faint blue threads | those 64 futures, individually. The band is their spread, not a ribbon someone drew. |
 | yellow dashed ellipse | the 90 % region the ball should come to rest in. **This is what the 7-of-10 bar is measured against.** |
 | green/red crosshair | where a real ball actually stopped, in Measure mode. |
+
+### Playing it
+
+The path is also a thing that happens over time. Press play (it starts on its own when you
+release a flick, unless your system asks for reduced motion) and the whole ensemble
+advances together over the roll's real duration. Scrub, pause, replay.
+
+What moves is **not one ball**. A single confident sphere sliding along the mean would
+quietly undo the work the band does: on the demo photo the predicted roll is 34 cm and the
+90 % interval is 81 cm, and a ball gliding to a definite stop would bury that. So all 64
+futures move, the mean is a hollow ring rather than a sphere, and the readout under the
+frame says, at every instant, how many futures are still on the measured surface and **how
+far apart they are in centimetres**. On the demo that number passes 68 cm while the ball is
+still moving.
+
+When the roll runs off the fitted surface, the playhead stops there, strikes the marker
+out, and says *off the measured surface — nothing beyond here is known*. Futures that have
+left stop being drawn, so the swarm visibly thins: the app losing track of the world, shown
+rather than described. It is not animated sailing across the carpet.
 
 And the panel on the right — "what this is assuming" — shows the numbers that decide all
 of it: the assumed field of view and where it came from, the fitted plane's elevation
@@ -59,7 +80,7 @@ A refusal takes over the frame and no path is drawn. Everything in `src/confiden
 |---|---|
 | no plane at a table-like angle is found | there is nothing to roll a ball on |
 | the surface covers under 12 % of the frame | a patch that small is a lucky fit, not a table |
-| scatter about the plane exceeds 0.6 % of its size | the thing in front of the camera is not a plane |
+| scatter about the plane exceeds 1.5 % of its size | the thing in front of the camera is not a plane |
 | the near/far halves disagree by more than 12° | the depth map is warped, and no plane fit rescues that |
 | the camera is below 15° or above 70° elevation | too foreshortened to be useful / too little perspective to fit |
 | the tap selects over 35 % of the frame, or under 60 px | that is the table, or it is noise |
@@ -73,10 +94,47 @@ covering the image: an untested camera angle, a noisy or slightly bent surface, 
 rolls off the measured region, a roll still moving at the 6 s horizon, and **a band as wide
 as the prediction is long**, which with friction merely guessed is most of the time.
 
+One more caution, and it is the one that first mattered in practice: **the fitted surface
+may include more than the table**, raised when the surface could not be separated from its
+surroundings by appearance. See below.
+
 Two things it refuses to *claim* rather than refusing to draw: if most sampled futures run
 off the fitted surface or are still moving at the horizon, there is **no stop region** —
 the path is drawn to the edge and labelled as running off, and Measure mode discards the
 trial rather than scoring against a place the ball never stops.
+
+### The surface is the table, not everything coplanar with it
+
+The first real defect found in use: on the owner's own photo the green stipple spread well
+past the tabletop — over the partition behind it and the carpet beside it — and the
+prediction then ran off the table onto the floor.
+
+That is not a threshold problem. Sweeping the inlier threshold from 0.005 to 0.03 never
+removes those points: at every setting that keeps 80 % of the tabletop, tens to hundreds of
+carpet points come with it. Nor is it connectivity — the depth map is smooth across the
+table's edge, so the inlier set bridges it and 99 % of the leak is one connected blob with
+the table. **The carpet is genuinely near-coplanar with the tabletop** in back-projected
+relative depth, and geometry alone cannot tell them apart.
+
+Appearance can. A tabletop is one continuous surface with smooth shading across it, and its
+edge is a brightness *step*. So the fit grows a region outward from the middle of the
+surface, accepting a neighbour whose brightness is within 0.06 of the cell it came from —
+which crosses the table's own shading gradient, of any total size, and stops dead at its
+edge. The seed is the point with the most neighbours that are both plane inliers and close
+to it in tone, i.e. deepest inside a uniform region; seeding on inlier density alone
+saturates and lands on the table's edge, where an edge-stopping fill cannot move at all.
+
+Measured across all eleven M0 photos: fitted points more than 20 px outside the four-tap
+quad go from a median of 168 (max 406) to **zero on every photo**, keeping 82–97 % of the
+tabletop, while the plane's own error against the same reference is unchanged. Two side
+effects worth knowing: at shallow camera angles the fit got an order of magnitude better
+(16–25° elevation, exact geometry: 1.30° → 0.048°, because the wall behind the table no
+longer leaks in), and the flatness and bend numbers moved onto a different scale, now
+close to what M0 itself reports over a hand-delimited region.
+
+If the gate cannot find one continuous region — a table the same tone as the floor, say —
+it falls back to the raw geometry and **says so in the panel**, because then the surface
+really might be everything coplanar with the table.
 
 ### Camera motion
 
@@ -176,6 +234,7 @@ app/src/segment.js      SlimSAM-77, ported from m0/region.py
 app/src/object.js       mask -> contact point (lower edge, not centroid) + radius
 app/src/tracker.js      blob-centroid tracking + the rolling-model velocity fit
 app/src/motion.js       camera-motion detection
+app/src/anim.js         the playhead clock and its interpolation
 app/src/exif.js         FocalLengthIn35mmFilm, including the sub-IFD walk M0 needed
 app/src/synth.js        probe/scene.py's tabletop in JavaScript, with exact ground truth
 app/src/sources.js      camera / photo / synthetic

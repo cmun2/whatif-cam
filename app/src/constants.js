@@ -60,27 +60,33 @@ export const ELEV_REFUSE_MAX_DEG = 70.0;
 export const ELEV_SIGMA_PENALTY_PER_DEG = 0.12;
 
 // ---------------------------------------------------------------- plane fit quality
-// NOTE these are NOT m0.json's flatness_pct. M0 fitted one least-squares plane over a
-// hand-delimited region; the app runs RANSAC over the whole frame and reports the scatter
-// of the INLIERS, which is a tighter statistic. Re-measured through the app's own code
-// path on the same eleven photos (tests/plane-real.test.js): 0.03-0.07 %.
+// Scatter about the fitted plane, as a percentage of the fitted region's own extent.
 //
-// These two thresholds are the numbers most likely to be wrong in someone else's kitchen.
-// They are calibrated on eleven photos of ONE table and nothing else.
-export const FLATNESS_WARN_PCT = 0.25;
-export const FLATNESS_REFUSE_PCT = 0.6;
+// Now that the appearance gate trims the surface to the tabletop, this is close to the
+// same statistic m0.json reports over a hand-delimited region (0.159-0.284 %): measured
+// through the app's own code path on the same eleven photos, 0.27-0.36 %. Before the gate
+// it read 0.03-0.07 %, because the extent it normalised by included the carpet.
+//
+// Warn is set just under 2x the worst of those eleven, refuse at about 4x. These two
+// thresholds are the numbers most likely to be wrong in someone else's kitchen: they are
+// calibrated on eleven photos of ONE table and nothing else.
+export const FLATNESS_WARN_PCT = 0.6;
+export const FLATNESS_REFUSE_PCT = 1.5;
 
 // The near/far bend metric (m0/planefit.py plane_stats). It cannot see a global disparity
 // offset -- see m0/README.md section 5 -- but a LARGE reading still means the surface is
 // genuinely warped, which no single scalar rescues. M0 read 3.1-4.4 deg on the owner's
-// photos; the app's own inlier-set version of it reads 1.6-3.9 deg on the same images.
+// photos; the app reads 2.4-3.7 deg on the same images, which is the closest the two code
+// paths have come to agreeing.
 export const NEARFAR_WARN_DEG = 6.0;
 export const NEARFAR_REFUSE_DEG = 12.0;
 
 // Fraction of sampled pixels that must land on the winning plane for it to count as a
-// table rather than a lucky patch. On the owner's eleven photos the app's RANSAC claims
-// 0.24-0.30 of the frame -- the table does not fill an ultra-wide shot -- so the floor is
-// set well below that rather than at an intuitive-sounding "half the frame".
+// table rather than a lucky patch. On the owner's eleven photos the app claims 0.23-0.29
+// of the frame after the appearance gate -- the table does not fill an ultra-wide shot --
+// so the floor is set well below that rather than at an intuitive-sounding "half the
+// frame". It also does real work: a badly warped depth map leaves a fitted region small
+// enough to trip it.
 export const INLIER_FRACTION_REFUSE = 0.12;
 
 // ---------------------------------------------------------------- physics

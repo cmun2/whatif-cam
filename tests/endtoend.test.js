@@ -65,7 +65,8 @@ function trial(seed, opts) {
 
   const hfovApp = opts.hfovApp ?? 60;    // 60 = the truth; 68 = the app's default guess
   const K = G.intrinsics(hfovApp, truth.W, truth.H);
-  const fit = PF.fitSupportPlane(disp, truth.W, truth.H, K, { step: 3 });
+  const fit = PF.fitSupportPlane(disp, truth.W, truth.H, K,
+    { step: 3, lum: gray(fr0.rgba, fr0.w, fr0.h) });
   if (!fit.ok) return { skipped: 'no plane' };
   const planeErr = G.angleBetween(fit.plane.n, truth.plane.n);
 

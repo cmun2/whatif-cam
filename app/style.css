@@ -36,6 +36,14 @@ main { display: flex; gap: 16px; padding: 16px; align-items: flex-start; flex-wr
 .sw-band { background: rgba(120,190,255,.32); }
 .sw-stop { background: rgba(255,210,90,.8); }
 .sw-obs { background: rgba(110,240,160,.9); }
+.sw-swarm { background: rgba(150,210,255,.9); border-radius: 50%; }
+
+#transport { display: flex; gap: 8px; align-items: center; margin-top: 9px; }
+#transport button { padding: 4px 10px; font: 12px var(--mono); }
+#transport #btnReplay { padding: 4px 9px; }
+#transport input[type=range] { flex: 1; accent-color: var(--accent); }
+#transport #timeRead { font: 11px var(--mono); color: var(--dim); min-width: 92px; text-align: right; }
+#motionNote { margin-top: 6px; }
 
 #panel { flex: 0 1 420px; min-width: 300px; display: flex; flex-direction: column; gap: 12px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 13px; }

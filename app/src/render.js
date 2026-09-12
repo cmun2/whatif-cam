@@ -151,6 +151,99 @@ export function drawPrediction(ctx, pred, opts = {}) {
   ctx.restore();
 }
 
+/**
+ * The playhead: every sampled future at one instant, plus a hollow ring on the mean.
+ *
+ * Deliberately NOT a solid ball on the mean path. The honest content of the screen is the
+ * spread, and a confident-looking sphere sliding along the middle of it would read as a
+ * measurement. What moves is the swarm; the ring only says where its middle is.
+ */
+export function drawPlayhead(ctx, pred, t, anim) {
+  if (!pred || !pred.ok || t == null) return;
+  const times = pred.times;
+  ctx.save();
+
+  let alive = 0;
+  ctx.fillStyle = 'rgba(150, 210, 255, 0.55)';
+  for (let i = 0; i < pred.samplePixels.length; i++) {
+    const q = anim.sampleAtTime(pred.samplePixels[i], times, t, pred.sampleLeftAt[i]);
+    if (!q) continue;
+    alive++;
+    ctx.beginPath();
+    ctx.arc(q[0], q[1], 1.8, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+
+  const left = t > (pred.nominalLeftAt ?? Infinity);
+  const m = anim.sampleAtTime(pred.nominalPixels, times, Math.min(t, pred.nominalLeftAt ?? t), null);
+  if (m) {
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = left ? 'rgba(255, 140, 110, 0.95)' : 'rgba(235, 245, 255, 0.95)';
+    ctx.beginPath();
+    ctx.arc(m[0], m[1], 7, 0, 2 * Math.PI);
+    ctx.stroke();
+    if (left) {
+      // It has run off the surface the plane was fitted to. Strike it out and say so.
+      ctx.beginPath();
+      ctx.moveTo(m[0] - 5, m[1] - 5); ctx.lineTo(m[0] + 5, m[1] + 5);
+      ctx.moveTo(m[0] + 5, m[1] - 5); ctx.lineTo(m[0] - 5, m[1] + 5);
+      ctx.stroke();
+      // Below the marker: the path's own label sits above it.
+      label(ctx, m, 'off the measured surface - nothing beyond here is known',
+        'rgba(255, 140, 110, 0.95)', +1);
+    }
+  }
+
+  // How much of the ensemble is still on the table, and how wide it has become. The
+  // spread in centimetres is the whole point of animating the ensemble instead of one
+  // ball: a single sphere gliding along the mean would quietly restore the confidence the
+  // band exists to remove, so the number it is hiding goes on screen beside it.
+  const total = pred.samplePixels.length;
+  if (total) {
+    let spread = null;
+    if (pred.samplePlaneM) {
+      // Each future's displacement from ITS OWN start, not from a shared origin: the
+      // sampled scenes have different scales and slightly different ball positions, so a
+      // common origin would report several centimetres of "spread" before anything moved.
+      const ds = [];
+      for (let i = 0; i < pred.samplePlaneM.length; i++) {
+        if (pred.sampleLeftAt[i] != null && t > pred.sampleLeftAt[i]) continue;
+        const track = pred.samplePlaneM[i];
+        const q = anim.sampleAtTime(track, times, t, null);
+        if (q) ds.push(Math.hypot(q[0] - track[0][0], q[1] - track[0][1]));
+      }
+      if (ds.length > 4) {
+        ds.sort((a, b) => a - b);
+        const q5 = ds[Math.round(0.05 * (ds.length - 1))];
+        const q95 = ds[Math.round(0.95 * (ds.length - 1))];
+        spread = 100 * (q95 - q5);
+      }
+    }
+    const txt = `t = ${t.toFixed(2)} s   ${alive}/${total} futures still on the surface`
+      + (spread != null ? `   spread ${spread.toFixed(0)} cm` : '');
+    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    const w = ctx.measureText(txt).width;
+    ctx.fillStyle = 'rgba(8, 12, 20, 0.72)';
+    ctx.fillRect(8, ctx.canvas.height - 44, w + 12, 17);
+    ctx.fillStyle = alive < total ? 'rgba(255, 170, 140, 0.95)' : 'rgba(180, 215, 245, 0.95)';
+    ctx.fillText(txt, 14, ctx.canvas.height - 32);
+  }
+  ctx.restore();
+}
+
+function label(ctx, at, text, colour, dir = -1) {
+  ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  const w = ctx.measureText(text).width;
+  const x = Math.min(ctx.canvas.width - w - 12, Math.max(6, at[0] + 12));
+  const y = dir < 0
+    ? Math.max(16, at[1] - 14)
+    : Math.min(ctx.canvas.height - 8, at[1] + 26);
+  ctx.fillStyle = 'rgba(8, 12, 20, 0.78)';
+  ctx.fillRect(x - 5, y - 12, w + 10, 17);
+  ctx.fillStyle = colour;
+  ctx.fillText(text, x, y);
+}
+
 /** The measured rest point of a real trial, drawn against the band that predicted it. */
 export function drawObserved(ctx, px, inside) {
   if (!px) return;

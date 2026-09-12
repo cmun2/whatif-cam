@@ -3,12 +3,16 @@ import * as S from '../app/src/synth.js';
 import * as PF from '../app/src/planefit.js';
 import * as G from '../app/src/geometry.js';
 import * as Conf from '../app/src/confidence.js';
+import { gray } from '../app/src/imageops.js';
 import { FLATNESS_WARN_PCT as C_FLAT_WARN, NEARFAR_WARN_DEG as C_BEND_WARN } from '../app/src/constants.js';
 
 const fitFor = (scene, dispOpts, fitOpts) => {
   const fr = S.renderFrame(scene, [0, 0.55], 0.02);
   const disp = S.disparityFrom(fr, dispOpts);
-  return PF.fitSupportPlane(disp, scene.W, scene.H, scene.K, { step: 3, ...fitOpts });
+  // The luminance image goes in exactly as the app supplies it: the appearance gate is
+  // part of the plane fit now, not an optional extra, so the tests must exercise it.
+  const lum = gray(fr.rgba, fr.w, fr.h);
+  return PF.fitSupportPlane(disp, scene.W, scene.H, scene.K, { step: 3, lum, ...fitOpts });
 };
 
 test('exact depth recovers the plane to 0.1 deg across the angles the app is FOR', () => {
@@ -24,18 +28,21 @@ test('exact depth recovers the plane to 0.1 deg across the angles the app is FOR
   note(`30-65 deg elevation, exact geometry: worst plane error ${worst.toFixed(3)} deg`);
 });
 
-test('below 30 deg the fit is looser, which is why the app warns there', () => {
-  // At a shallow angle the table is heavily foreshortened and a large part of the frame is
-  // background, so RANSAC has less to work with. It stays inside the 5 deg budget but it is
-  // an order of magnitude worse than at 37 deg -- and 37 deg is the only regime anything
-  // has been measured in. The widened band at these angles is not decoration.
+test('shallow angles are no longer the weak case they were', () => {
+  // Before the appearance gate, 16-25 deg elevation cost up to 1.3 deg on EXACT geometry:
+  // at a shallow angle the table is heavily foreshortened, most of the frame is the wall
+  // behind it, and the wall leaked into the fit. Trimming the surface to one contiguous
+  // region of similar tone removed that, and the low-elevation error dropped by more than
+  // an order of magnitude. The app still widens the band there, because the *depth model*
+  // has not been measured at those angles even though the *fit* now behaves.
   let worst = 0;
   for (const pitch of [16, 18, 20, 22, 25]) {
     const scene = S.makeScene({ pitchDeg: pitch });
     worst = Math.max(worst, G.angleBetween(fitFor(scene, {}).plane.n, scene.plane.n));
   }
-  assert(worst < 1.6, `worst error ${worst.toFixed(3)} deg below 30 deg`);
-  note(`16-25 deg elevation, exact geometry: worst plane error ${worst.toFixed(3)} deg`);
+  assert(worst < 0.1, `worst error ${worst.toFixed(3)} deg below 30 deg`);
+  note(`16-25 deg elevation, exact geometry: worst plane error ${worst.toFixed(3)} deg `
+    + '(1.30 deg before the appearance gate)');
 });
 
 test('the plane fit is deterministic -- the same frame always gives the same plane', () => {
@@ -98,30 +105,41 @@ test('a hugely warped surface is refused -- it stops looking like a table at all
     `expected refusal: ${JSON.stringify({ flat: fit.flatnessPct, bend: fit.nearfarDeg, cov: fit.inlierFraction })}`);
 });
 
-test('KNOWN BLIND SPOT: a moderate warp gives a badly wrong plane no diagnostic catches', () => {
-  // This test exists to record a limitation, not to celebrate a feature. At warp 0.2 the
-  // RANSAC latches onto a locally-flat sub-patch of a curved surface: flatness reads a
-  // clean 0.09 %, the bend metric reads 3.2 deg (inside the range the owner's real photos
-  // occupy), coverage is normal -- and the plane is more than 20 deg wrong.
+test('a moderate warp is now FLAGGED, though still not refused', () => {
+  // This was recorded as a flat blind spot before the appearance gate: at warp 0.2 the
+  // RANSAC latched onto a locally-flat sub-patch of a curved surface, every diagnostic
+  // read clean, and the plane was 21 deg wrong.
   //
-  // It is the same class of blindness m0/README.md section 5 proves for the disparity
-  // offset: a frame does not contain the evidence. Two things were tried and neither
-  // separated it from real data -- the fraction of the surface's bounding box left
-  // unexplained, and the bend metric recomputed at a looser inlier threshold.
+  // Requiring the surface to be one contiguous region of similar tone narrowed it. The
+  // plane is still 21 deg wrong -- the gate fixes WHAT is claimed, not the depth map --
+  // but the region it survives on is now small and noisy enough that flatness crosses its
+  // warning line and coverage falls to the floor. The app says something is off without
+  // knowing what.
   //
-  // In this particular case the elevation check happens to fire, because a plane 20 deg
-  // wrong is also at an untested angle. That is luck. If someone adds a real detector,
-  // this test should start failing on the last assertion -- that is the point of it.
+  // It still does not REFUSE, which is the remaining gap. If someone adds a real detector,
+  // the last assertion here should start failing: that is the point of it.
   const scene = S.makeScene({ pitchDeg: 37 });
   const fit = fitFor(scene, { warp: 0.2 });
   const err = G.angleBetween(fit.plane.n, scene.plane.n);
   assert(err > 10, `expected a badly wrong plane, got ${err.toFixed(1)} deg`);
-  assert(fit.flatnessPct < C_FLAT_WARN, 'flatness looks clean -- that is the blind spot');
-  assert((fit.nearfarDeg ?? 0) < C_BEND_WARN, 'bend looks normal -- that is the blind spot');
+  assert(fit.flatnessPct > C_FLAT_WARN, 'flatness should now flag it');
+  assert((fit.nearfarDeg ?? 0) < C_BEND_WARN, 'the bend metric still cannot see it');
   assert(Conf.worst(Conf.checkPlane(fit)) !== 'refuse',
-    'still not refused: if this now fails, a real detector was added -- update the note in README');
-  note(`warp 0.2: plane ${err.toFixed(1)} deg wrong, flatness ${fit.flatnessPct.toFixed(3)} %, `
-    + `bend ${(fit.nearfarDeg ?? 0).toFixed(2)} deg -- undetectable from one frame`);
+    'still not refused: if this now fails, a real detector was added -- update app/README.md');
+  note(`warp 0.2: plane ${err.toFixed(1)} deg wrong, flatness ${fit.flatnessPct.toFixed(3)} % `
+    + `(warns above ${C_FLAT_WARN}), bend ${(fit.nearfarDeg ?? 0).toFixed(2)} deg (blind)`);
+});
+
+test('a surface that cannot be separated from its surroundings says so', () => {
+  // When no image is supplied the gate cannot run, and the app must admit the fitted
+  // surface may be everything coplanar with the table rather than the table.
+  const scene = S.makeScene({ pitchDeg: 37 });
+  const fr = S.renderFrame(scene, [0, 0.55], 0.02);
+  const bare = PF.fitSupportPlane(S.disparityFrom(fr), scene.W, scene.H, scene.K, { step: 3 });
+  assert(bare.separated === false);
+  const issues = Conf.checkPlane(bare);
+  assert(issues.some((i) => i.code === 'unseparated'), issues.map((i) => i.code).join(','));
+  assert(Conf.worst(issues) === 'warn');
 });
 
 test('a camera at an untested elevation warns, and widens the band', () => {

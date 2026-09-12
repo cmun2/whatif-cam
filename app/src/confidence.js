@@ -38,10 +38,10 @@ export function checkPlane(fit) {
   if (fit.flatnessPct > C.FLATNESS_REFUSE_PCT) {
     out.push(R('not-flat', 'This surface is not flat enough to be a plane',
       `Scatter about the best-fit plane is ${fit.flatnessPct.toFixed(3)} % of the region's size. ` +
-      `The eleven M0 photos run 0.03-0.07 % through this same code; past ${C.FLATNESS_REFUSE_PCT} % a plane is the wrong model of what is there.`));
+      `The eleven M0 photos run 0.27-0.36 % through this same code; past ${C.FLATNESS_REFUSE_PCT} % a plane is the wrong model of what is there.`));
   } else if (fit.flatnessPct > C.FLATNESS_WARN_PCT) {
     out.push(W('flatness', 'The depth map is noisy over this surface',
-      `Flatness ${fit.flatnessPct.toFixed(3)} % against 0.03-0.07 % on the M0 photos. The band is widened to match.`));
+      `Flatness ${fit.flatnessPct.toFixed(3)} % against 0.27-0.36 % on the M0 photos. The band is widened to match.`));
   }
 
   if (fit.nearfarDeg != null) {
@@ -51,8 +51,15 @@ export function checkPlane(fit) {
         `That is the depth map being warped, and no plane fit fixes it.`));
     } else if (fit.nearfarDeg > C.NEARFAR_WARN_DEG) {
       out.push(W('bend', 'The surface bends between its near and far halves',
-        `${fit.nearfarDeg.toFixed(1)} deg of bend, against 1.6-3.9 deg on the M0 photos.`));
+        `${fit.nearfarDeg.toFixed(1)} deg of bend, against 2.4-3.7 deg on the M0 photos.`));
     }
+  }
+
+  if (fit.separated === false) {
+    out.push(W('unseparated', 'The fitted surface may include more than the table',
+      (fit.separationNote || 'the surface could not be separated from its surroundings by appearance')
+      + ' Everything coplanar with your table -- a floor, a carpet, a partition behind it -- can '
+      + 'land on the same plane, and geometry alone cannot tell them apart.'));
   }
 
   const e = fit.elevationDeg;

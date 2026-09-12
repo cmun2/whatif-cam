@@ -51,6 +51,13 @@ for measuring it.
   (`tests/plane-real.test.js`).
 - In the browser, on WASM with no WebGPU adapter: depth **1.1–1.4 s**, SlimSAM encode
   **2.8 s**, plane fit ~100 ms. Once per scene, as designed.
+- **The fitted surface has to be segmented by appearance, not only by geometry.** The
+  carpet beside the owner's table is genuinely near-coplanar with it: no inlier threshold
+  and no connectivity rule separates them, so the app claimed a surface reaching 188 px past
+  the table's edge and predicted the ball rolling onto the floor. Growing the region from
+  the middle of the surface and stopping at brightness *steps* removes it — points more than
+  20 px off the tabletop go from a median 168 to **zero on all eleven photos**, with the
+  plane's own error unchanged.
 - **Friction, not perception, dominates the error budget.** With it merely guessed at ±40 %,
   a table three times grippier than assumed still lands inside the 90 % band. Perception
   error is an order of magnitude smaller than that. v0.2 is the fix, and it is more urgent
