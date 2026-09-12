@@ -37,13 +37,36 @@ export function makePlaneLayer(fit, w, h) {
   return cv;
 }
 
+/**
+ * One screen pixel, expressed in the image units every draw call here works in.
+ *
+ * app.js gives the context a scale transform so that geometry stays in 640x480 image
+ * coordinates while the canvas itself is at device resolution. Geometry should scale with
+ * that (a ball is a physical size); CHROME should not -- a 1.5 px stroke or an 11 px label
+ * must stay 1.5 and 11 screen pixels or it just gets fat instead of sharp. Multiplying a
+ * chrome size by this keeps it in screen pixels.
+ */
+const screenPx = (ctx) => 1 / (ctx.getTransform().a || 1);
+
+let _rgbaCanvas = null;
+/** putImageData ignores the transform, so the frame has to go through drawImage. */
 export function drawFrame(ctx, frame) {
-  const img = new ImageData(frame.rgba, frame.w, frame.h);
-  ctx.putImageData(img, 0, 0);
+  if (frame.display) {
+    ctx.drawImage(frame.display, 0, 0, frame.w, frame.h);
+    return;
+  }
+  if (!_rgbaCanvas || _rgbaCanvas.width !== frame.w || _rgbaCanvas.height !== frame.h) {
+    _rgbaCanvas = document.createElement('canvas');
+    _rgbaCanvas.width = frame.w; _rgbaCanvas.height = frame.h;
+  }
+  _rgbaCanvas.getContext('2d').putImageData(new ImageData(frame.rgba, frame.w, frame.h), 0, 0);
+  ctx.drawImage(_rgbaCanvas, 0, 0, frame.w, frame.h);
 }
 
 export function drawPlaneLayer(ctx, layer, show) {
-  if (layer && show) ctx.drawImage(layer, 0, 0);
+  // The layer is one stipple dot per fitted sample at frame resolution, so it is drawn in
+  // image coordinates and scales with the photo -- it is data, not chrome.
+  if (layer && show) ctx.drawImage(layer, 0, 0, layer.width, layer.height);
 }
 
 /** The contact shadow. Shape comes from the fitted plane, so it is evidence, not styling. */
@@ -84,10 +107,11 @@ function drawGroundShadow(ctx, poly) {
 export function drawBall(ctx, ball) {
   if (!ball) return;
   const [u, v] = ball.contactPixel;
+  const sp = screenPx(ctx);
   drawGroundShadow(ctx, ball.groundPolygon);
   ctx.save();
   if (ball.maskOutline) {
-    ctx.strokeStyle = C_BALL; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = C_BALL; ctx.lineWidth = 1.5 * sp;
     ctx.beginPath();
     for (const seg of ball.maskOutline) {
       ctx.moveTo(seg[0], seg[1]); ctx.lineTo(seg[2], seg[3]);
@@ -106,41 +130,43 @@ export function drawBall(ctx, ball) {
     ctx.beginPath(); ctx.arc(u, cy, r, 0, 2 * Math.PI);
     ctx.fillStyle = g; ctx.fill();
     // A limb, so the sphere stays legible on a light table and on a dark one.
-    ctx.strokeStyle = C_BALL; ctx.lineWidth = 1.25; ctx.stroke();
+    ctx.strokeStyle = C_BALL; ctx.lineWidth = 1.25 * sp; ctx.stroke();
     // Specular dot, sub-pixel-safe.
     if (r > 6) {
       ctx.beginPath();
-      ctx.arc(u - r * 0.36, cy - r * 0.38, Math.max(r * 0.13, 1), 0, 2 * Math.PI);
+      ctx.arc(u - r * 0.36, cy - r * 0.38, Math.max(r * 0.13, sp), 0, 2 * Math.PI);
       ctx.fillStyle = 'rgba(255,255,255,0.80)'; ctx.fill();
     }
   }
   // The contact point. ROADMAP.md risk 3: this is the mask's lower edge, not its centroid.
   ctx.fillStyle = C_BALL;
-  ctx.beginPath(); ctx.arc(u, v, 3.5, 0, 2 * Math.PI); ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(u - 8, v); ctx.lineTo(u + 8, v); ctx.stroke();
+  ctx.beginPath(); ctx.arc(u, v, 3.5 * sp, 0, 2 * Math.PI); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = 1 * sp;
+  ctx.beginPath(); ctx.moveTo(u - 8 * sp, v); ctx.lineTo(u + 8 * sp, v); ctx.stroke();
   ctx.restore();
 }
 
 export function drawDrag(ctx, from, to) {
   if (!from || !to) return;
   ctx.save();
+  const sp = screenPx(ctx);
   ctx.strokeStyle = 'rgba(255,255,255,0.85)';
-  ctx.lineWidth = 2;
-  ctx.setLineDash([5, 4]);
+  ctx.lineWidth = 2 * sp;
+  ctx.setLineDash([5 * sp, 4 * sp]);
   ctx.beginPath(); ctx.moveTo(from[0], from[1]); ctx.lineTo(to[0], to[1]); ctx.stroke();
   const a = Math.atan2(to[1] - from[1], to[0] - from[0]);
   ctx.setLineDash([]);
   ctx.beginPath();
   ctx.moveTo(to[0], to[1]);
-  ctx.lineTo(to[0] - 10 * Math.cos(a - 0.4), to[1] - 10 * Math.sin(a - 0.4));
-  ctx.lineTo(to[0] - 10 * Math.cos(a + 0.4), to[1] - 10 * Math.sin(a + 0.4));
+  ctx.lineTo(to[0] - 10 * sp * Math.cos(a - 0.4), to[1] - 10 * sp * Math.sin(a - 0.4));
+  ctx.lineTo(to[0] - 10 * sp * Math.cos(a + 0.4), to[1] - 10 * sp * Math.sin(a + 0.4));
   ctx.closePath(); ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.fill();
   ctx.restore();
 }
 
 export function drawPrediction(ctx, pred, opts = {}) {
   if (!pred || !pred.ok) return;
+  const sp = screenPx(ctx);
   ctx.save();
 
   if (pred.bandPolygon.length > 3) {
@@ -152,7 +178,7 @@ export function drawPrediction(ctx, pred, opts = {}) {
   }
 
   if (opts.showSamples !== false) {
-    ctx.strokeStyle = C_SAMPLE; ctx.lineWidth = 1;
+    ctx.strokeStyle = C_SAMPLE; ctx.lineWidth = 1 * sp;
     for (const run of pred.samplePixels) {
       ctx.beginPath();
       let started = false;
@@ -164,7 +190,7 @@ export function drawPrediction(ctx, pred, opts = {}) {
     }
   }
 
-  ctx.strokeStyle = C_PATH; ctx.lineWidth = 2.5; ctx.setLineDash([9, 6]);
+  ctx.strokeStyle = C_PATH; ctx.lineWidth = 2 * sp; ctx.setLineDash([7 * sp, 5 * sp]);
   ctx.beginPath();
   let started = false;
   for (const q of pred.nominalPixels) {
@@ -176,8 +202,8 @@ export function drawPrediction(ctx, pred, opts = {}) {
 
   if (pred.stopEllipse) {
     const e = pred.stopEllipse;
-    ctx.strokeStyle = C_STOP; ctx.lineWidth = 2;
-    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = C_STOP; ctx.lineWidth = 1.5 * sp;
+    ctx.setLineDash([4 * sp, 3 * sp]);
     ctx.beginPath();
     ctx.ellipse(e.cx, e.cy, e.rx, e.ry, e.angle, 0, 2 * Math.PI);
     ctx.stroke();
@@ -187,7 +213,7 @@ export function drawPrediction(ctx, pred, opts = {}) {
 
   const tip = pred.nominalStopPx;
   if (tip) {
-    ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.font = `600 ${11 * sp}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     const label = pred.hasStop
       ? 'PREDICTION - not a measurement'
       : 'PREDICTION - runs off the measured surface, no stop point';
@@ -232,6 +258,7 @@ function swarmSprite() {
 export function drawPlayhead(ctx, pred, t, anim) {
   if (!pred || !pred.ok || t == null) return;
   const times = pred.times;
+  const sp = screenPx(ctx);
   ctx.save();
 
   let alive = 0;
@@ -249,22 +276,23 @@ export function drawPlayhead(ctx, pred, t, anim) {
     const q = anim.sampleAtTime(pred.samplePixels[i], times, t, pred.sampleLeftAt[i]);
     if (!q) continue;
     alive++;
-    ctx.drawImage(sprite, q[0] - SWARM_R, q[1] - SWARM_R);
+    const d = SWARM_R * 2 * sp;
+    ctx.drawImage(sprite, q[0] - d / 2, q[1] - d / 2, d, d);
   }
 
   const left = t > (pred.nominalLeftAt ?? Infinity);
   const m = anim.sampleAtTime(pred.nominalPixels, times, Math.min(t, pred.nominalLeftAt ?? t), null);
   if (m) {
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 1.75 * sp;
     ctx.strokeStyle = left ? 'rgba(255, 140, 110, 0.95)' : 'rgba(235, 245, 255, 0.95)';
     ctx.beginPath();
-    ctx.arc(m[0], m[1], 7, 0, 2 * Math.PI);
+    ctx.arc(m[0], m[1], 7 * sp, 0, 2 * Math.PI);
     ctx.stroke();
     if (left) {
       // It has run off the surface the plane was fitted to. Strike it out and say so.
       ctx.beginPath();
-      ctx.moveTo(m[0] - 5, m[1] - 5); ctx.lineTo(m[0] + 5, m[1] + 5);
-      ctx.moveTo(m[0] + 5, m[1] - 5); ctx.lineTo(m[0] - 5, m[1] + 5);
+      ctx.moveTo(m[0] - 5 * sp, m[1] - 5 * sp); ctx.lineTo(m[0] + 5 * sp, m[1] + 5 * sp);
+      ctx.moveTo(m[0] + 5 * sp, m[1] - 5 * sp); ctx.lineTo(m[0] - 5 * sp, m[1] + 5 * sp);
       ctx.stroke();
       // Below the marker: the path's own label sits above it.
       label(ctx, m, 'off the measured surface - nothing beyond here is known',
@@ -299,7 +327,7 @@ export function drawPlayhead(ctx, pred, t, anim) {
     }
     const txt = `t = ${t.toFixed(2)} s   ${alive}/${total} futures still on the surface`
       + (spread != null ? `   spread ${spread.toFixed(0)} cm` : '');
-    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
+    ctx.font = `${11 * sp}px ui-monospace, SFMono-Regular, Menlo, monospace`;
     const w = ctx.measureText(txt).width;
     ctx.fillStyle = 'rgba(8, 12, 20, 0.72)';
     ctx.fillRect(8, ctx.canvas.height - 44, w + 12, 17);
@@ -310,14 +338,21 @@ export function drawPlayhead(ctx, pred, t, anim) {
 }
 
 function label(ctx, at, text, colour, dir = -1) {
-  ctx.font = '600 11px ui-monospace, SFMono-Regular, Menlo, monospace';
+  const sp = screenPx(ctx);
+  ctx.font = `600 ${11 * sp}px ui-monospace, SFMono-Regular, Menlo, monospace`;
   const w = ctx.measureText(text).width;
-  const x = Math.min(ctx.canvas.width - w - 12, Math.max(6, at[0] + 12));
+  // ctx.canvas is in device pixels now; the clamp has to happen in image coordinates.
+  const cw = ctx.canvas.width * sp, ch = ctx.canvas.height * sp;
+  const x = Math.min(cw - w - 12 * sp, Math.max(6 * sp, at[0] + 12 * sp));
   const y = dir < 0
-    ? Math.max(16, at[1] - 14)
-    : Math.min(ctx.canvas.height - 8, at[1] + 26);
+    ? Math.max(16 * sp, at[1] - 14 * sp)
+    : Math.min(ch - 8 * sp, at[1] + 26 * sp);
   ctx.fillStyle = 'rgba(8, 12, 20, 0.78)';
-  ctx.fillRect(x - 5, y - 12, w + 10, 17);
+  const pad = 5 * sp, r = 3 * sp;
+  const bx = x - pad, by = y - 12 * sp, bw = w + pad * 2, bh = 17 * sp;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, r); else ctx.rect(bx, by, bw, bh);
+  ctx.fill();
   ctx.fillStyle = colour;
   ctx.fillText(text, x, y);
 }
@@ -325,13 +360,14 @@ function label(ctx, at, text, colour, dir = -1) {
 /** The measured rest point of a real trial, drawn against the band that predicted it. */
 export function drawObserved(ctx, px, inside) {
   if (!px) return;
+  const sp = screenPx(ctx);
   ctx.save();
   ctx.strokeStyle = inside ? 'rgba(110,240,160,0.95)' : 'rgba(255,110,110,0.95)';
-  ctx.lineWidth = 2.5;
-  ctx.beginPath(); ctx.arc(px[0], px[1], 8, 0, 2 * Math.PI); ctx.stroke();
+  ctx.lineWidth = 2 * sp;
+  ctx.beginPath(); ctx.arc(px[0], px[1], 8 * sp, 0, 2 * Math.PI); ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(px[0] - 11, px[1]); ctx.lineTo(px[0] + 11, px[1]);
-  ctx.moveTo(px[0], px[1] - 11); ctx.lineTo(px[0], px[1] + 11);
+  ctx.moveTo(px[0] - 11 * sp, px[1]); ctx.lineTo(px[0] + 11 * sp, px[1]);
+  ctx.moveTo(px[0], px[1] - 11 * sp); ctx.lineTo(px[0], px[1] + 11 * sp);
   ctx.stroke();
   ctx.restore();
 }
@@ -339,7 +375,7 @@ export function drawObserved(ctx, px, inside) {
 export function drawTrack(ctx, pts) {
   if (!pts || pts.length < 2) return;
   ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1.5 * screenPx(ctx);
   ctx.beginPath();
   ctx.moveTo(pts[0].u, pts[0].v);
   for (const p of pts.slice(1)) ctx.lineTo(p.u, p.v);

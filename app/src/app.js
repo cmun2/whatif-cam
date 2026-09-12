@@ -274,8 +274,8 @@ async function loadPhoto(url) {
         + 'view below is a <b>guess</b>. Set it if you know it.';
     }
     syncFovUI();
-    cv.width = f.w; cv.height = f.h;
-    draw();
+    draw();   // sizeCanvas() inside draw() owns the backing store now
+
     hint('photo loaded - press "Set up scene"');
     updateNumbers();
   } catch (e) {
@@ -520,11 +520,30 @@ function paintTransport() {
 }
 
 // ---------------------------------------------------------------- drawing
+/**
+ * Size the canvas to the DEVICE, not to the working buffer.
+ *
+ * The nets run at 640 on the long side and every number in the panel is computed there --
+ * that stays. But the canvas is displayed around 1030 CSS px wide, so a 640-wide backing
+ * store meant a 3.2x magnification of the photo and of every stroke, dash and glyph drawn
+ * on it. The backing store now matches the device, and the context carries a scale so all
+ * the drawing code keeps working in 640x480 image coordinates. render.js divides chrome
+ * sizes by that scale, so lines stay thin and sharp instead of thick and soft.
+ */
+function sizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const cssW = cv.clientWidth || S.frame.w;
+  const want = Math.max(S.frame.w, Math.round(cssW * dpr));
+  const k = want / S.frame.w;
+  const h = Math.round(S.frame.h * k);
+  if (cv.width !== want || cv.height !== h) { cv.width = want; cv.height = h; }
+  ctx.setTransform(k, 0, 0, k, 0, 0);
+  return k;
+}
+
 function draw() {
   if (!S.frame) return;
-  if (cv.width !== S.frame.w || cv.height !== S.frame.h) {
-    cv.width = S.frame.w; cv.height = S.frame.h;
-  }
+  sizeCanvas();
   R.drawFrame(ctx, S.frame);
   R.drawPlaneLayer(ctx, S.planeLayer, $('showPlane').checked);
   if (S.measure?.track?.length) R.drawTrack(ctx, S.measure.track);
@@ -786,8 +805,11 @@ function renderTrials() {
 
 // ---------------------------------------------------------------- pointer
 function toCanvas(ev) {
+  // IMAGE coordinates, not canvas pixels. The backing store is at device resolution now,
+  // so scaling by cv.width would land every tap k times too far from the corner.
   const r = cv.getBoundingClientRect();
-  return [((ev.clientX - r.left) / r.width) * cv.width, ((ev.clientY - r.top) / r.height) * cv.height];
+  const w = S.frame?.w ?? cv.width, h = S.frame?.h ?? cv.height;
+  return [((ev.clientX - r.left) / r.width) * w, ((ev.clientY - r.top) / r.height) * h];
 }
 cv.addEventListener('pointerdown', async (ev) => {
   const [u, v] = toCanvas(ev);
@@ -876,7 +898,7 @@ $('fileInput').addEventListener('change', async (e) => {
     ? { deg: img.fov.hfovDeg, source: 'exif', sigma: C.HFOV_SIGMA_EXIF_DEG }
     : { deg: C.DEFAULT_HFOV_DEG, source: 'assumed', sigma: C.HFOV_SIGMA_ASSUMED_DEG };
   $('srcNote').textContent = `${img.name} - ${img.w}x${img.h} working, FOV ${S.fov.source}`;
-  syncFovUI(); cv.width = img.w; cv.height = img.h; draw(); updateNumbers();
+  syncFovUI(); draw(); updateNumbers();
   hint('press "Set up scene"');
 });
 function setBallMode(mode) {
