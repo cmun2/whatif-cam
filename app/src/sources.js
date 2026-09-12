@@ -17,6 +17,17 @@ import * as Synth from './synth.js';
 import { resizeRGBA } from './imageops.js';
 
 export const WORK_MAX_SIDE = 640;
+/**
+ * A second, larger copy of the frame, kept only to be LOOKED at.
+ *
+ * 640 is the resolution the neural nets and every number in the panel are computed at, and
+ * that must not change -- it is what m0/README.md measured. But the canvas is displayed
+ * around 1030 CSS px wide on a 2x screen, so drawing the 640-wide buffer meant the photo
+ * AND every overlay stroke were magnified 3.2x: a 1 px line landed as 3.2 blurred device
+ * pixels, which is most of why this looked hand-drawn. The overlay now renders at device
+ * resolution and the photo is drawn from this copy instead.
+ */
+export const DISPLAY_MAX_SIDE = 1920;
 
 function drawToWorking(bitmapOrVideo, sw, sh) {
   const s = Math.min(1, WORK_MAX_SIDE / Math.max(sw, sh));
@@ -29,7 +40,16 @@ function drawToWorking(bitmapOrVideo, sw, sh) {
   // Our own area-average resize rather than the canvas's, so the browser and the Node
   // tests resample identically -- see imageops.js.
   const rgba = s < 1 ? resizeRGBA(full, sw, sh, w, h) : full;
-  return { rgba, w, h };
+
+  const ds = Math.min(1, DISPLAY_MAX_SIDE / Math.max(sw, sh));
+  let display = cv;
+  if (ds < 1) {
+    display = document.createElement('canvas');
+    display.width = Math.max(1, Math.round(sw * ds));
+    display.height = Math.max(1, Math.round(sh * ds));
+    display.getContext('2d').drawImage(bitmapOrVideo, 0, 0, display.width, display.height);
+  }
+  return { rgba, w, h, display };
 }
 
 export async function fromImageUrl(url) {
