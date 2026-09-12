@@ -21,6 +21,12 @@ export async function getOrt() {
       ort.env.wasm.numThreads = (typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated)
         ? Math.min(4, navigator.hardwareConcurrency || 2) : 1;
       ort.env.logLevel = 'error';
+      // Run the WASM execution provider in a worker. Without this, a machine that falls back
+      // off WebGPU runs SlimSAM's 1024x1024 encoder on the main thread and the tab stops
+      // answering the compositor; with it, the page stays interactive and the progress bar
+      // keeps moving. WebGPU still does some main-thread work, which is why the encode is
+      // also deferred to the first tap rather than run at scene setup.
+      ort.env.wasm.proxy = true;
       return ort;
     })();
   }

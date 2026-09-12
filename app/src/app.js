@@ -29,8 +29,40 @@ const ctx = cv.getContext('2d');
 
 // The eleven M0 photos. They are gitignored, so on a fresh clone none of these exist and
 // the app falls back to the synthetic table -- which needs no files and no model download.
+// The eleven photos the M0 gate was measured on, in the order it reported them. This is a
+// FALLBACK only: the picker is filled from whatever is actually in photos/ (see listPhotos),
+// so a clone with its own photos works without editing this file, and nobody's filenames
+// need to be added here to be usable.
 const DEMO_PHOTOS = ['IMG_5359', 'IMG_5360', 'IMG_5361', 'IMG_5362', 'IMG_5357', 'IMG_5358',
   'IMG_5364', 'IMG_5365', 'IMG_5366', 'IMG_5367', 'IMG_5368'];
+
+/**
+ * What is actually in photos/, read from the dev server's directory index.
+ *
+ * The M0 eleven are one table in one room. A second surface -- a different wood, a
+ * different light -- is the cheapest thing that can falsify the plane fit, so loading new
+ * photos should not require a code change. Known names are listed first, in M0's order, so
+ * the app still opens on the photo its write-up refers to; anything else follows.
+ *
+ * Falls back to DEMO_PHOTOS if the directory is not listable (any static host that does not
+ * serve an index).
+ */
+async function listPhotos() {
+  try {
+    const res = await fetch(PHOTO_BASE, { cache: 'no-store' });
+    if (!res.ok) throw new Error(String(res.status));
+    const names = [...new Set(
+      (await res.text()).match(/[A-Za-z0-9_-]+\.(?:JPG|jpg|jpeg|JPEG|png|PNG)/g) || [],
+    )].map((n) => n.replace(/\.[^.]+$/, ''));
+    if (!names.length) throw new Error('empty');
+    const known = DEMO_PHOTOS.filter((p) => names.includes(p));
+    const rest = names.filter((n) => !DEMO_PHOTOS.includes(n)).sort();
+    return [...known, ...rest];
+  } catch (e) {
+    log('photos: directory not listable (' + e.message + ') - using the built-in list');
+    return DEMO_PHOTOS;
+  }
+}
 const PHOTO_BASE = new URL('../../photos/', import.meta.url).href;
 
 const S = {
@@ -311,7 +343,12 @@ async function setupScene() {
       S.stage = 'need-ball';
       if (Conf.worst(issues) === 'ok') banner(null);
       hint(S.ballMode === 'tap' ? 'tap the ball' : 'tap where to drop a virtual ball');
-      if (S.ballMode === 'tap') await ensureSegmenter();
+      // NOT ensureSegmenter() here. SlimSAM's encoder is 1024x1024 and its run blocks the
+      // main thread for seconds -- measured at 3.0 s on this machine with WebGPU, and Chrome
+      // puts up "Page Unresponsive" when that stretches on a loaded machine. Switching to the
+      // synthetic table sets ballMode to 'tap', so "Set up scene" was silently paying that
+      // cost with no tap in sight. placeBall() already calls ensureSegmenter on the first
+      // tap, where the progress bar has an action to explain it.
     }
     draw();
   } catch (e) {
@@ -335,6 +372,32 @@ async function ensureSegmenter() {
 }
 
 // ---------------------------------------------------------------- ball
+/**
+ * The ball's footprint on the table, as a polygon in image space.
+ *
+ * A sphere resting on a plane touches it at one point, but the thing that makes it read as
+ * resting there rather than floating in front of the photo is a contact shadow -- and the
+ * SHAPE of that shadow is not decoration. It is a circle of the ball's own radius lying in
+ * the fitted plane, projected through the same intrinsics as everything else. Its
+ * eccentricity and orientation are therefore a picture of the plane the app measured: if
+ * the plane fit is wrong, the shadow sits wrong, and you can see it without reading a
+ * single number.
+ */
+function ballGroundPolygon(K, plane, contactCam, radiusM, planeScaleM, n = 48) {
+  const frame = Geo.planeFrame(plane);
+  const c = Geo.camToPlane(frame, contactCam);
+  const rRel = planeScaleM > 0 ? radiusM / planeScaleM : radiusM;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = (2 * Math.PI * i) / n;
+    const q = [c[0] + rRel * Math.cos(a), c[1] + rRel * Math.sin(a)];
+    const px = Geo.planeToPixel(K, frame, q);
+    if (!px || !Number.isFinite(px[0]) || !Number.isFinite(px[1])) return null;
+    out.push(px);
+  }
+  return out;
+}
+
 async function placeBall(u, v) {
   if (!S.fit?.ok) return;
   const K = Geo.intrinsics(S.fov.deg, S.frame.w, S.frame.h);
@@ -354,6 +417,7 @@ async function placeBall(u, v) {
     ball = {
       virtual: true, contactPixel: [u, v], contactCam: X,
       radiusPx: (rRel * K.fx) / X[2], radiusRel: rRel, radiusM: rM, maskPx: 0,
+      groundPolygon: ballGroundPolygon(K, S.fit.plane, X, rM, scaleM),
     };
   } else {
     await ensureSegmenter();
@@ -367,10 +431,16 @@ async function placeBall(u, v) {
       updateNumbers(); draw();
       return;
     }
+    const rTapM = (Number($('ballDia').value) / 1000) / 2;
     ball = {
       ...a, virtual: false, mask,
       maskOutline: R.maskOutline(mask, S.frame.w, S.frame.h),
-      radiusM: (Number($('ballDia').value) / 1000) / 2,
+      radiusM: rTapM,
+      // radiusRel is in plane units; the shadow is drawn in the same units, so no camera
+      // height is needed here -- unlike the virtual ball, a tapped object has a measured size.
+      groundPolygon: (a.contactCam && a.radiusRel)
+        ? ballGroundPolygon(K, S.fit.plane, a.contactCam, a.radiusRel, 1)
+        : null,
       extraIssues: tapIssues,
     };
     log(`tap: mask ${a.maskPx} px, r=${a.radiusPx.toFixed(1)} px, `
@@ -847,7 +917,11 @@ $('btnClearTrials').addEventListener('click', () => { S.trials = []; renderTrial
 // answer and this is the second.
 window.whatif = { state: S, Geo, PF, Unc, Conf, Obj, C };
 (async function boot() {
-  $('photoPick').innerHTML = DEMO_PHOTOS.map((p) => `<option value="${p}">${p}.JPG</option>`).join('');
+  const photos = await listPhotos();
+  $('photoPick').innerHTML = photos.map((p) => `<option value="${p}">${p}.JPG</option>`).join('');
+  if (photos.length > DEMO_PHOTOS.length) {
+    log(`photos: ${photos.length} in photos/ (${photos.length - DEMO_PHOTOS.length} beyond the M0 eleven)`);
+  }
   $('camHCtl').hidden = true;
   log('WhatIf Cam v0.0 - everything local, no backend, no build step.');
   await useSource('photo');
